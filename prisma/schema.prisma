@@ -1,0 +1,1170 @@
+// AmaaShop platform — legacy Prisma schema, kept ONLY so
+// `scripts/migrate-to-firestore.ts` (the one-time Postgres -> Firestore data
+// migration) can read the old production database. The live app no longer
+// uses Prisma or Cloud SQL at all — see docs/ARCHITECTURE.md for the current
+// Firestore data model (src/server/models.ts / src/server/firestore.ts).
+// Safe to delete this whole `prisma/` directory, and the `prisma` +
+// `@prisma/client` devDependencies, once that migration has run and been
+// verified against production.
+//
+// Conventions
+//  - IDs are cuid() strings, except AppUser.id which IS the Firebase UID.
+//  - All money is Decimal(14,2) rupees. Never Float. Arithmetic via src/server/money.ts.
+//  - Ledgers are append-only. Reversals append a negative row referencing the original.
+//  - "*_enc" columns hold app-layer AES-256-GCM ciphertext; "*_last4" / "*_hash"
+//    (keyed HMAC blind index) are the only searchable projections.
+//  - Sections marked [SCHEMA-ONLY] are modelled now for stability but not yet
+//    wired to application logic (see docs/BUILD-PLAN.md).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Used by `prisma generate`, and at runtime for local dev (plain TCP).
+  // On App Hosting the connection is made by the Cloud SQL connector in
+  // src/server/db.ts instead, which reads these same credentials.
+  url       = env("DATABASE_URL")
+  // Unpooled connection used only by `prisma migrate` / introspection
+  // (points at the Cloud SQL Auth Proxy on 127.0.0.1 when run locally).
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================================================
+// IDENTITY & ACCESS
+// ============================================================================
+
+enum UserRole {
+  SUPER_ADMIN //  unrestricted
+  OPS_ADMIN //  network / genealogy operations
+  FINANCE_ADMIN //  commissions, payouts, withdrawals, tax
+  STORE_MANAGER //  catalog, inventory, categories, autoship kits
+  SUPPORT_COMPLIANCE //  user profiles, password resets, KYC, order tracking
+  MEMBER
+  CONSUMER
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+/// Mirror of a Firebase Auth user. Created on first authenticated request.
+model AppUser {
+  id          String     @id // Firebase UID
+  email       String?    @unique
+  phone       String?    @unique
+  displayName String?
+  role        UserRole   @default(CONSUMER)
+  status      UserStatus @default(ACTIVE)
+
+  /// Per-user tuning on top of the role's default capability set — the Super
+  /// Admin's "custom restricted sub-role" mechanism (see src/server/rbac.ts).
+  extraCapabilities  String[] @default([])
+  deniedCapabilities String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberProfile MemberProfile?
+  kycProfile    KycProfile?
+  wallet        Wallet?
+  orders        Order[]
+  auditLogs     AuditLog[]          @relation("AuditActor")
+  notifications Notification[]
+  payoutItems   PayoutItem[]
+  stockLedger   StockLedgerEntry[]  @relation("StockActor")
+  withdrawals   WithdrawalRequest[] @relation("WithdrawalRequester")
+  productsCreated Product[]         @relation("ProductCreatedBy")
+  productsUpdated Product[]         @relation("ProductUpdatedBy")
+
+  @@index([role])
+  @@map("app_users")
+}
+
+// ============================================================================
+// MEMBERSHIP & GENEALOGY  (unilevel, Level 0..20)
+// ============================================================================
+
+enum PlacementStrategy {
+  UNILEVEL
+  BINARY
+  MATRIX
+}
+
+enum MemberStatus {
+  PENDING_KYC
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+model MemberProfile {
+  id                String            @id @default(cuid())
+  userId            String            @unique
+  user              AppUser           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memberCode        String            @unique // human-facing referral code, e.g. AMA-8F3K2Q
+  sponsorId         String?
+  sponsor           MemberProfile?    @relation("Sponsorship", fields: [sponsorId], references: [id])
+  directReferrals   MemberProfile[]   @relation("Sponsorship")
+  placementStrategy PlacementStrategy @default(UNILEVEL)
+  status            MemberStatus      @default(PENDING_KYC)
+  joinedAt          DateTime          @default(now())
+  joiningOrderId    String?           @unique
+  joiningOrder      Order?            @relation("JoiningOrder", fields: [joiningOrderId], references: [id])
+
+  // compliance actions (admin, 2FA-gated, audited)
+  frozenAt         DateTime? // wallet + referral link frozen; still in tree
+  frozenReason     String?
+  terminatedAt     DateTime? // removed from the chain; downline compressed upward
+  compressedIntoId String? // the ancestor this member's downline rolled up to
+  lastMovedAt      DateTime? // last manual re-sponsor (node move)
+  lastMovedFromId  String? // previous sponsor before the last move
+
+  // closure-table edges
+  ancestorEdges   NetworkClosure[] @relation("ClosureAncestor")
+  descendantEdges NetworkClosure[] @relation("ClosureDescendant")
+
+  familyMembers        FamilyMember[]
+  commissionsEarned    CommissionLedgerEntry[] @relation("CommissionBeneficiary")
+  commissionsGenerated CommissionLedgerEntry[] @relation("CommissionSourceMember")
+  trustContributions   TrustFundLedgerEntry[]
+  repurchaseOrders     Order[]                 @relation("PlacedByMember")
+
+  /// Public referral-registration funnel (see MemberApplication).
+  sponsoredApplications MemberApplication[] @relation("ApplicationSponsor")
+  originApplication     MemberApplication?  @relation("ApplicationMember")
+
+  @@index([sponsorId])
+  @@index([status])
+  @@map("member_profiles")
+}
+
+/// Transitive closure of the genealogy. One row per (ancestor, descendant)
+/// pair, INCLUDING self at depth 0. "All uplines of X up to 20":
+///   WHERE descendant_id = X AND depth BETWEEN 1 AND 20 ORDER BY depth.
+/// "Entire downline of X": WHERE ancestor_id = X AND depth > 0.
+model NetworkClosure {
+  ancestorId   String
+  descendantId String
+  depth        Int // 0 = self, 1 = direct child, ...
+  ancestor     MemberProfile @relation("ClosureAncestor", fields: [ancestorId], references: [id], onDelete: Cascade)
+  descendant   MemberProfile @relation("ClosureDescendant", fields: [descendantId], references: [id], onDelete: Cascade)
+
+  @@id([ancestorId, descendantId])
+  @@index([descendantId, depth])
+  @@index([ancestorId, depth])
+  @@map("network_closure")
+}
+
+// ============================================================================
+// KYC, FAMILY / NOMINEE  (brief §1.6, §4.3 — encrypted at rest, masked in UI)
+// ============================================================================
+
+enum KycStatus {
+  NOT_SUBMITTED
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum FamilyRelation {
+  SELF
+  SPOUSE
+  SON
+  DAUGHTER
+  FATHER
+  MOTHER
+}
+
+model KycProfile {
+  id     String    @id @default(cuid())
+  userId String    @unique
+  user   AppUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status KycStatus @default(NOT_SUBMITTED)
+
+  aadhaarEnc        String?
+  aadhaarLast4      String?
+  aadhaarHash       String? @unique // keyed HMAC blind index — duplicate-identity check
+  panEnc            String?
+  panLast4          String?
+  panHash           String? @unique
+  bankAccountEnc    String?
+  bankAccountLast4  String?
+  ifsc              String?
+  accountHolderName String?
+  documentPaths     Json? // { aadhaarFront, aadhaarBack, panCard, ... } GCS object paths
+
+  consentAcceptedAt DateTime? // DPDP Act — purpose-limited consent at submission
+  submittedAt       DateTime?
+  reviewedByUserId  String?
+  reviewedAt        DateTime?
+  rejectionReason   String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([status])
+  @@map("kyc_profiles")
+}
+
+model FamilyMember {
+  id              String         @id @default(cuid())
+  memberProfileId String
+  memberProfile   MemberProfile  @relation(fields: [memberProfileId], references: [id], onDelete: Cascade)
+  relation        FamilyRelation
+  name            String
+  aadhaarEnc      String?
+  aadhaarLast4    String?
+  panEnc          String?
+  panLast4        String?
+  isNominee       Boolean        @default(false)
+  nomineeSharePct Decimal?       @db.Decimal(5, 2)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([memberProfileId])
+  @@map("family_members")
+}
+
+// ============================================================================
+// MEMBER APPLICATIONS  (public referral-registration funnel)
+// ============================================================================
+
+enum MemberApplicationStatus {
+  PENDING
+  ON_HOLD
+  APPROVED
+  REJECTED
+}
+
+/// How a `MemberApplication` entered the pipeline.
+/// PUBLIC = the visitor-facing `/join` form; ADMIN = enrolled directly by an
+/// operator from the admin panel (auto-approved on create).
+enum MemberApplicationSource {
+  PUBLIC
+  ADMIN
+}
+
+/// A prospect who completed the public `/join` form. Holds NO login and is NOT
+/// in the genealogy — Admin approval calls `provisionMemberFromApplication`
+/// (src/server/network/admin-create.ts), which stands up the real account and
+/// its tree position via `joinNetwork`. There is deliberately NO OTP: `phone`
+/// is unverified until Admin KYC; `captchaVerifiedAt` records the anti-bot
+/// check performed at submit time. Raw Aadhaar is never stored (Aadhaar Act
+/// §29 / DPDP) — only `idProofLast4`.
+model MemberApplication {
+  id String @id @default(cuid())
+
+  // referral
+  referrerInput       String // raw ?ref= value as entered / received
+  sponsorId           String?
+  sponsor             MemberProfile? @relation("ApplicationSponsor", fields: [sponsorId], references: [id])
+  sponsorCodeSnapshot String? // resolved AMA-code captured at submit time
+
+  // applicant
+  fullName          String
+  phone             String // applicant's 10-digit mobile (unverified)
+  phoneHash         String  @unique // keyed HMAC blind index — dedupe
+  email             String?
+  age               Int
+  gender            String?
+  familyMemberCount Int
+
+  // identity proof — never a raw Aadhaar number
+  idProofType  String? // "AADHAAR_LAST4" | "PAN" | "VOTER_ID" | "DL"
+  idProofLast4 String?
+
+  // structured address
+  addressLine String
+  city        String
+  district    String
+  state       String
+  pincode     String
+
+  nomineeName String?
+
+  // consent / anti-abuse (DPDP — purpose-limited, timestamped)
+  sponsorConfirmed  Boolean   @default(false)
+  termsAcceptedAt   DateTime?
+  consentIp         String?
+  consentUserAgent  String?
+  captchaVerifiedAt DateTime?
+
+  // provenance
+  source          MemberApplicationSource @default(PUBLIC)
+  createdByUserId String? // operator who enrolled this distributor directly (source = ADMIN)
+
+  status           MemberApplicationStatus @default(PENDING)
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  reviewNote       String?
+
+  // set once approved + provisioned
+  memberProfileId String?        @unique
+  createdMember   MemberProfile? @relation("ApplicationMember", fields: [memberProfileId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([sponsorId])
+  @@index([source])
+  @@map("member_applications")
+}
+
+// ============================================================================
+// CATALOG, SITES, INVENTORY
+// ============================================================================
+
+/// The primary storefront plus the "3 other sister websites" (brief §3.3).
+/// [CONFIRM] whether these are deployments of this codebase or external.
+model Site {
+  id        String   @id @default(cuid())
+  name      String
+  domain    String   @unique
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  warehouses   Warehouse[]
+  orders       Order[]
+  transfersOut SiteStockTransfer[] @relation("TransferFromSite")
+  transfersIn  SiteStockTransfer[] @relation("TransferToSite")
+
+  @@map("sites")
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String
+  slug      String    @unique
+  iconKey   String?
+  sortOrder Int       @default(0)
+  products  Product[]
+
+  @@map("categories")
+}
+
+/// Publish lifecycle. `DRAFT` is admin-only (never on the storefront),
+/// `ACTIVE` is live, `ARCHIVED` is hidden but kept for order history / SEO 410s.
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model Product {
+  id          String  @id @default(cuid())
+  sku         String  @unique
+  name        String
+  slug        String  @unique
+  subtitle    String? // one-line selling point, shown under the title
+  description String? // long form; supports plain text / light markdown
+  brand       String?
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id])
+  tags        String[]  @default([])
+
+  status      ProductStatus @default(DRAFT)
+  publishedAt DateTime? // first time it went ACTIVE
+  isActive    Boolean       @default(false) // kept in sync with `status == ACTIVE` for legacy reads
+  isFeatured  Boolean       @default(false)
+  isPopular   Boolean       @default(false)
+  isLatest    Boolean       @default(false)
+
+  // ── Pricing & tax ────────────────────────────────────────────────────────
+  mrp          Decimal @db.Decimal(14, 2)
+  sellingPrice Decimal @db.Decimal(14, 2)
+  gstRateBps   Int     @default(0) // basis points: 0 / 500 / 1200 / 1800
+  hsnCode      String?
+  gtin         String? // EAN/UPC/ISBN barcode — feeds schema.org + Merchant Center
+
+  // ── Logistics ────────────────────────────────────────────────────────────
+  unitLabel   String? // "500 g", "1 L"
+  weightGrams Int? // shipping weight
+
+  // ── MLM dual-metrics: commission flows on VOLUME, not price ───────────────
+  pv               Decimal @default(0) @db.Decimal(14, 2) // Personal Volume
+  bv               Decimal @default(0) @db.Decimal(14, 2) // Business Volume (commissionable)
+  autoshipEligible Boolean @default(false)
+
+  // ── Media ────────────────────────────────────────────────────────────────
+  imageUrl String? // primary image (kept in sync with imageAssets[0])
+  images   Json? // legacy string[] of URLs — superseded by imageAssets
+
+  // ── SEO (industry-standard set — Yoast / Shopify parity) ──────────────────
+  metaTitle       String? // <title> override; ~60 chars ideal
+  metaDescription String? // meta description; ~155 chars ideal
+  ogImageUrl      String? // social share image (1200x630); falls back to imageUrl
+  canonicalUrl    String? // absolute canonical override (syndicated / variant dupes)
+  noIndex         Boolean @default(false) // emit robots noindex for this PDP
+  focusKeyword    String? // primary target phrase (drives the on-page SEO checks)
+
+  // ── Ratings (denormalised from reviews) ──────────────────────────────────
+  rating  Decimal @default(0) @db.Decimal(3, 2)
+  reviews Int     @default(0)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  createdByUserId String?
+  createdBy       AppUser? @relation("ProductCreatedBy", fields: [createdByUserId], references: [id])
+  updatedByUserId String?
+  updatedBy       AppUser? @relation("ProductUpdatedBy", fields: [updatedByUserId], references: [id])
+
+  imageAssets    ProductImage[]
+  reviewList     ProductReview[]
+  inventory      InventoryItem[]
+  orderItems     OrderItem[]
+  stockLedger    StockLedgerEntry[]
+  transfers      SiteStockTransfer[]
+  variants       ProductVariant[]
+  affiliateLinks AffiliateLink[]
+
+  @@index([categoryId])
+  @@index([status])
+  @@index([isActive])
+  @@index([updatedAt])
+  @@map("products")
+}
+
+/// Ordered gallery image for a Product. `position` 0 is the primary/hero shot
+/// and is mirrored onto `Product.imageUrl` for legacy single-image reads.
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  alt       String? // accessibility + image SEO
+  position  Int     @default(0)
+  createdAt DateTime @default(now())
+
+  @@unique([productId, position])
+  @@index([productId])
+  @@map("product_images")
+}
+
+/// Moderation state for a customer product review.
+enum ReviewStatus {
+  PENDING
+  PUBLISHED
+  REJECTED
+}
+
+/// A genuine customer review. Only `PUBLISHED` rows are ever exposed to the
+/// storefront or emitted as schema.org `Review` JSON-LD — never fabricated.
+/// `Product.rating` / `Product.reviews` stay as a denormalised cache; when
+/// published rows exist the storefront recomputes the aggregate from them.
+model ProductReview {
+  id            String       @id @default(cuid())
+  productId     String
+  product       Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  authorName    String
+  authorUserId  String?
+  rating        Int // 1..5
+  title         String?
+  body          String
+  status        ReviewStatus @default(PENDING)
+  verifiedBuyer Boolean      @default(false)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([productId, status])
+  @@map("product_reviews")
+}
+
+model Warehouse {
+  id          String             @id @default(cuid())
+  siteId      String
+  site        Site               @relation(fields: [siteId], references: [id])
+  name        String
+  address     Json?
+  inventory   InventoryItem[]
+  stockLedger StockLedgerEntry[]
+
+  @@index([siteId])
+  @@map("warehouses")
+}
+
+model InventoryItem {
+  productId    String
+  warehouseId  String
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse    Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  qtyAvailable Int       @default(0)
+  qtyReserved  Int       @default(0)
+  updatedAt    DateTime  @updatedAt
+
+  @@id([productId, warehouseId])
+  @@map("inventory_items")
+}
+
+enum StockReason {
+  PURCHASE_IN
+  SALE_OUT
+  RESERVATION
+  RESERVATION_RELEASE
+  ADJUSTMENT
+  TRANSFER_OUT
+  TRANSFER_IN
+  RETURN_IN
+}
+
+/// Append-only stock movement log per SKU per warehouse (brief §3.3).
+model StockLedgerEntry {
+  id              String      @id @default(cuid())
+  productId       String
+  warehouseId     String
+  product         Product     @relation(fields: [productId], references: [id])
+  warehouse       Warehouse   @relation(fields: [warehouseId], references: [id])
+  delta           Int // signed
+  reason          StockReason
+  refType         String? // "order", "transfer", "manual"
+  refId           String?
+  createdByUserId String?
+  createdBy       AppUser?    @relation("StockActor", fields: [createdByUserId], references: [id])
+  note            String?
+  createdAt       DateTime    @default(now())
+
+  @@index([productId, warehouseId])
+  @@index([refType, refId])
+  @@map("stock_ledger_entries")
+}
+
+enum TransferStatus {
+  DRAFT
+  DISPATCHED
+  RECEIVED
+  CANCELLED
+}
+
+/// [SCHEMA-ONLY] Stock allocation/transfer between the 4 sites + cost tracking
+/// for the comparison dashboard (brief §3.3, §4.4).
+model SiteStockTransfer {
+  id           String         @id @default(cuid())
+  fromSiteId   String
+  toSiteId     String
+  fromSite     Site           @relation("TransferFromSite", fields: [fromSiteId], references: [id])
+  toSite       Site           @relation("TransferToSite", fields: [toSiteId], references: [id])
+  productId    String
+  product      Product        @relation(fields: [productId], references: [id])
+  qty          Int
+  unitCost     Decimal        @db.Decimal(14, 2)
+  status       TransferStatus @default(DRAFT)
+  createdAt    DateTime       @default(now())
+  dispatchedAt DateTime?
+  receivedAt   DateTime?
+
+  @@index([productId])
+  @@map("site_stock_transfers")
+}
+
+// ============================================================================
+// PRICE COMPARISON  (PDP "Live Price Comparison" — brief §3.x)
+// ============================================================================
+
+/// A sellable pack size of a Product ("500 g", "1 kg", "2 kg"). Our own price
+/// lives here; competitor prices are cached in `CompetitorPrice` rows and
+/// refreshed lazily (see src/server/pricing/competitor-cache.ts).
+model ProductVariant {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// Stable per-variant SKU the compare endpoint is queried by, e.g. "AMA-ATTA-1KG".
+  sku         String @unique
+  /// Canonical weight in grams — sort/compare on this, not the label.
+  weightGrams Int
+  /// Display label: "500 g", "1 kg", "2 kg".
+  label       String
+
+  // Our pricing (same Decimal(14,2) rupee convention as Product).
+  mrp          Decimal @db.Decimal(14, 2)
+  sellingPrice Decimal @db.Decimal(14, 2)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  competitorPrices CompetitorPrice[]
+
+  @@index([productId])
+  @@map("product_variants")
+}
+
+enum Retailer {
+  AMAZON
+  FLIPKART
+  JIOMART
+}
+
+/// Curated outbound affiliate deep-link for one product at one retailer. Set by
+/// ops in /admin/catalog; the storefront's price-comparison "View on <retailer>"
+/// links route through /api/out, which prefers an enabled row here over the
+/// scraped `CompetitorPrice.sourceUrl`. Kept in its own table so a competitor
+/// price refresh (or cache purge) never touches these hand-entered URLs.
+model AffiliateLink {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  retailer  Retailer
+  /// Full destination URL including the affiliate tag / tracking params.
+  url       String
+  enabled   Boolean  @default(true)
+  /// Outbound clicks sent through /api/out for this row.
+  clicks    Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, retailer])
+  @@index([productId])
+  @@map("affiliate_links")
+}
+
+/// Cached competitor price for one variant at one retailer. One row per
+/// (variant, retailer); the newest `lastUpdated` across a variant's rows is
+/// what the 24h staleness check reads.
+model CompetitorPrice {
+  id        String         @id @default(cuid())
+  variantId String
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  retailer  Retailer
+
+  /// null = retailer had no match / was unreachable on the last fetch.
+  price     Decimal? @db.Decimal(14, 2)
+  currency  String   @default("INR")
+  /// Deep link to the competitor's product page, for the "view on Amazon" link.
+  sourceUrl String?
+  inStock   Boolean  @default(true)
+
+  /// When this snapshot was fetched from the scraping API. Drives cache TTL.
+  lastUpdated DateTime @default(now()) @map("last_updated")
+
+  @@unique([variantId, retailer])
+  @@index([lastUpdated])
+  @@map("competitor_prices")
+}
+
+// ============================================================================
+// ORDERS, PAYMENTS, GST
+// ============================================================================
+
+enum OrderType {
+  STOREFRONT
+  REPURCHASE
+  JOINING
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+model Order {
+  id               String         @id @default(cuid())
+  orderNo          String         @unique
+  userId           String?
+  user             AppUser?       @relation(fields: [userId], references: [id])
+  placedByMemberId String?
+  placedByMember   MemberProfile? @relation("PlacedByMember", fields: [placedByMemberId], references: [id])
+  type             OrderType      @default(STOREFRONT)
+  status           OrderStatus    @default(PENDING)
+  siteId           String?
+  site             Site?          @relation(fields: [siteId], references: [id])
+
+  subtotal      Decimal @db.Decimal(14, 2)
+  discount      Decimal @default(0) @db.Decimal(14, 2)
+  shipping      Decimal @default(0) @db.Decimal(14, 2)
+  tax           Decimal @default(0) @db.Decimal(14, 2)
+  total         Decimal @db.Decimal(14, 2)
+  walletApplied Decimal @default(0) @db.Decimal(14, 2)
+
+  customerName    String
+  customerEmail   String
+  customerPhone   String?
+  shippingAddress Json
+  buyerStateCode  String? // GST place-of-supply, from shipping address
+
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+  cancelledAt DateTime?
+
+  items             OrderItem[]
+  payments          Payment[]
+  gstInvoice        GstInvoice?
+  joiningFor        MemberProfile?          @relation("JoiningOrder")
+  commissionEntries CommissionLedgerEntry[]
+  trustEntries      TrustFundLedgerEntry[]
+  domainEvents      DomainEvent[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+  @@index([confirmedAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id         String   @id @default(cuid())
+  orderId    String
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId  String?
+  product    Product? @relation(fields: [productId], references: [id])
+  sku        String
+  name       String
+  qty        Int
+  unitPrice  Decimal  @db.Decimal(14, 2)
+  gstRateBps Int      @default(0)
+  lineTax    Decimal  @default(0) @db.Decimal(14, 2)
+  lineTotal  Decimal  @db.Decimal(14, 2)
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+enum PaymentStatus {
+  CREATED
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  orderId        String
+  order          Order         @relation(fields: [orderId], references: [id])
+  provider       String // "SIMULATED" for now; "RAZORPAY" | "CASHFREE" later
+  providerRef    String?
+  method         String? // "UPI", "CARD", "WALLET", "COD"
+  amount         Decimal       @db.Decimal(14, 2)
+  status         PaymentStatus @default(CREATED)
+  idempotencyKey String        @unique
+  rawPayload     Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+/// GST invoice per order. CGST+SGST for intra-state, IGST for inter-state,
+/// determined from the shipping (place-of-supply) state (brief §3.5, §4.4).
+model GstInvoice {
+  id              String   @id @default(cuid())
+  orderId         String   @unique
+  order           Order    @relation(fields: [orderId], references: [id])
+  invoiceNo       String   @unique
+  sellerStateCode String
+  buyerStateCode  String
+  placeOfSupply   String
+  isInterState    Boolean
+  taxableValue    Decimal  @db.Decimal(14, 2)
+  cgst            Decimal  @default(0) @db.Decimal(14, 2)
+  sgst            Decimal  @default(0) @db.Decimal(14, 2)
+  igst            Decimal  @default(0) @db.Decimal(14, 2)
+  total           Decimal  @db.Decimal(14, 2)
+  pdfPath         String? // GCS object path
+  issuedAt        DateTime @default(now())
+
+  @@map("gst_invoices")
+}
+
+// ============================================================================
+// COMMISSION CONFIG  (versioned — never hardcoded, see docs/COMMISSION-PLAN.md)
+// ============================================================================
+
+enum RuleSetStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model CommissionRuleSet {
+  id              String        @id @default(cuid())
+  name            String
+  status          RuleSetStatus @default(DRAFT)
+  effectiveFrom   DateTime
+  effectiveTo     DateTime? // null = open-ended
+  ruleJson        Json // shape documented in docs/COMMISSION-PLAN.md
+  confirmPending  Json? // which values still need founder sign-off
+  createdByUserId String?
+  note            String?
+  createdAt       DateTime      @default(now())
+
+  ledgerEntries CommissionLedgerEntry[]
+  trustEntries  TrustFundLedgerEntry[]
+
+  @@index([status, effectiveFrom])
+  @@map("commission_rule_sets")
+}
+
+// ============================================================================
+// WALLET & LEDGERS  (ledger = source of truth; balance_cache is derived)
+// ============================================================================
+
+model Wallet {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           AppUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balanceCache   Decimal  @default(0) @db.Decimal(14, 2) // derived sum of transactions
+  settledBalance Decimal  @default(0) @db.Decimal(14, 2) // withdrawable (past clawback window)
+  updatedAt      DateTime @updatedAt
+
+  transactions WalletTransaction[]
+
+  @@map("wallets")
+}
+
+enum CommissionType {
+  JOINING_LEVEL_INCOME
+  REPURCHASE_COMMISSION
+  TRUST_CONTRIBUTION
+  CLAWBACK
+  ADJUSTMENT
+}
+
+enum LedgerStatus {
+  PENDING // job created, not yet posted
+  POSTED // credited to wallet
+  HELD // qualification not met / KYC pending — escrow
+  REVERSED
+}
+
+/// Immutable. A clawback is a NEW negative row with reversalOfId set — existing
+/// rows are never mutated. idempotencyKey guarantees no double-pay on retry.
+model CommissionLedgerEntry {
+  id             String                 @id @default(cuid())
+  beneficiaryId  String
+  beneficiary    MemberProfile          @relation("CommissionBeneficiary", fields: [beneficiaryId], references: [id])
+  sourceOrderId  String
+  sourceOrder    Order                  @relation(fields: [sourceOrderId], references: [id])
+  sourceMemberId String?
+  sourceMember   MemberProfile?         @relation("CommissionSourceMember", fields: [sourceMemberId], references: [id])
+  ruleSetId      String
+  ruleSet        CommissionRuleSet      @relation(fields: [ruleSetId], references: [id])
+  level          Int
+  type           CommissionType
+  amount         Decimal                @db.Decimal(14, 2) // signed
+  status         LedgerStatus           @default(PENDING)
+  idempotencyKey String                 @unique // {sourceOrderId}:{type}:{beneficiaryId}:{level}
+  reversalOfId   String?                @unique
+  reversalOf     CommissionLedgerEntry? @relation("Reversal", fields: [reversalOfId], references: [id])
+  reversedBy     CommissionLedgerEntry? @relation("Reversal")
+  heldReason     String?
+  runId          String?
+  run            CommissionRun?         @relation(fields: [runId], references: [id])
+  createdAt      DateTime               @default(now())
+  postedAt       DateTime?
+
+  walletTransaction WalletTransaction?
+
+  @@index([beneficiaryId, type])
+  @@index([sourceOrderId])
+  @@index([status])
+  @@index([runId])
+  @@map("commission_ledger_entries")
+}
+
+enum CommissionRunStatus {
+  DRAFT
+  PREVIEWED // math computed, shown to admin in staging
+  RELEASED // "Release Funds" clicked — entries POSTED to wallets
+  FAILED
+}
+
+/// A commission period the admin reviews in staging before releasing funds
+/// (RBAC spec §4). Entries are computed as PENDING, previewed, then POSTED in
+/// bulk on release.
+model CommissionRun {
+  id               String              @id @default(cuid())
+  label            String
+  periodStart      DateTime
+  periodEnd        DateTime
+  status           CommissionRunStatus @default(DRAFT)
+  entryCount       Int                 @default(0)
+  totalAmount      Decimal             @default(0) @db.Decimal(14, 2)
+  previewJson      Json? // per-beneficiary summary shown in staging
+  createdByUserId  String?
+  previewedAt      DateTime?
+  releasedByUserId String?
+  releasedAt       DateTime?
+  createdAt        DateTime            @default(now())
+
+  entries CommissionLedgerEntry[]
+
+  @@index([status])
+  @@map("commission_runs")
+}
+
+enum WithdrawalStatus {
+  PENDING
+  APPROVED
+  ON_HOLD
+  REJECTED
+  PAID
+}
+
+/// Distributor request to move e-wallet funds to a real bank account. Finance
+/// Admin approves / holds / rejects against fraud + threshold checks
+/// (RBAC spec §4).
+model WithdrawalRequest {
+  id               String           @id @default(cuid())
+  userId           String
+  user             AppUser          @relation("WithdrawalRequester", fields: [userId], references: [id])
+  amount           Decimal          @db.Decimal(14, 2)
+  status           WithdrawalStatus @default(PENDING)
+  bankAccountLast4 String?
+  ifsc             String?
+  requestedAt      DateTime         @default(now())
+  reviewedByUserId String?
+  reviewedAt       DateTime?
+  reviewNote       String?
+  payoutItemId     String?
+  createdAt        DateTime         @default(now())
+
+  @@index([status])
+  @@index([userId])
+  @@map("withdrawal_requests")
+}
+
+enum WalletTxnType {
+  CREDIT_COMMISSION
+  DEBIT_WITHDRAWAL
+  DEBIT_CLAWBACK
+  CREDIT_REFUND
+  ADJUSTMENT
+}
+
+model WalletTransaction {
+  id            String                 @id @default(cuid())
+  walletId      String
+  wallet        Wallet                 @relation(fields: [walletId], references: [id])
+  ledgerEntryId String?                @unique
+  ledgerEntry   CommissionLedgerEntry? @relation(fields: [ledgerEntryId], references: [id])
+  payoutItemId  String?
+  payoutItem    PayoutItem?            @relation(fields: [payoutItemId], references: [id])
+  type          WalletTxnType
+  amount        Decimal                @db.Decimal(14, 2) // signed
+  balanceAfter  Decimal                @db.Decimal(14, 2)
+  note          String?
+  createdAt     DateTime               @default(now())
+
+  @@index([walletId, createdAt])
+  @@map("wallet_transactions")
+}
+
+/// Append-only trust/temple/CSR fund ledger with a public transparency report
+/// (brief §1.4). Exact % is [CONFIRM]; the ledger exists regardless.
+model TrustFundLedgerEntry {
+  id             String            @id @default(cuid())
+  sourceOrderId  String
+  sourceOrder    Order             @relation(fields: [sourceOrderId], references: [id])
+  sourceMemberId String?
+  sourceMember   MemberProfile?    @relation(fields: [sourceMemberId], references: [id])
+  ruleSetId      String
+  ruleSet        CommissionRuleSet @relation(fields: [ruleSetId], references: [id])
+  amount         Decimal           @db.Decimal(14, 2)
+  note           String?
+  createdAt      DateTime          @default(now())
+
+  @@index([createdAt])
+  @@map("trust_fund_ledger_entries")
+}
+
+// ============================================================================
+// PAYOUTS  (simulated this phase: CSV export + manual mark-processed)
+// ============================================================================
+
+enum PayoutBatchStatus {
+  DRAFT
+  LOCKED
+  PROCESSING
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+}
+
+enum PayoutItemStatus {
+  PENDING
+  SENT
+  SUCCESS
+  FAILED
+  REVERSED
+}
+
+model PayoutBatch {
+  id              String            @id @default(cuid())
+  batchNo         String            @unique
+  status          PayoutBatchStatus @default(DRAFT)
+  lockToken       String? // concurrency guard against Scheduler double-trigger
+  totalGross      Decimal           @default(0) @db.Decimal(14, 2)
+  totalTds        Decimal           @default(0) @db.Decimal(14, 2)
+  totalNet        Decimal           @default(0) @db.Decimal(14, 2)
+  createdByUserId String?
+  lockedAt        DateTime?
+  processedAt     DateTime?
+  createdAt       DateTime          @default(now())
+
+  items PayoutItem[]
+
+  @@map("payout_batches")
+}
+
+model PayoutItem {
+  id               String           @id @default(cuid())
+  batchId          String
+  batch            PayoutBatch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  userId           String
+  user             AppUser          @relation(fields: [userId], references: [id])
+  grossAmount      Decimal          @db.Decimal(14, 2)
+  tdsAmount        Decimal          @default(0) @db.Decimal(14, 2)
+  netAmount        Decimal          @db.Decimal(14, 2)
+  bankAccountLast4 String?
+  ifsc             String?
+  gatewayRef       String?
+  status           PayoutItemStatus @default(PENDING)
+  failureReason    String?
+  processedAt      DateTime?
+  createdAt        DateTime         @default(now())
+
+  walletTransactions WalletTransaction[]
+
+  @@index([batchId])
+  @@index([userId])
+  @@map("payout_items")
+}
+
+// ============================================================================
+// ASYNC QUEUE  (in-DB now; swappable for Cloud Tasks — src/server/queue/)
+// ============================================================================
+
+enum DomainEventType {
+  MEMBER_JOINED
+  REPURCHASE_CONFIRMED
+  ORDER_CANCELLED
+}
+
+enum EventStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  DEAD_LETTER
+}
+
+model DomainEvent {
+  id             String          @id @default(cuid())
+  type           DomainEventType
+  orderId        String?
+  order          Order?          @relation(fields: [orderId], references: [id])
+  payload        Json
+  idempotencyKey String          @unique
+  status         EventStatus     @default(PENDING)
+  attempts       Int             @default(0)
+  lastError      String?
+  createdAt      DateTime        @default(now())
+  processedAt    DateTime?
+
+  jobs CommissionJob[]
+
+  @@index([status, createdAt])
+  @@map("domain_events")
+}
+
+model CommissionJob {
+  id            String      @id @default(cuid())
+  domainEventId String
+  domainEvent   DomainEvent @relation(fields: [domainEventId], references: [id], onDelete: Cascade)
+  beneficiaryId String
+  level         Int
+  status        EventStatus @default(PENDING)
+  attempts      Int         @default(0)
+  lastError     String?
+  ledgerEntryId String?
+  createdAt     DateTime    @default(now())
+  processedAt   DateTime?
+
+  @@index([status])
+  @@index([domainEventId])
+  @@map("commission_jobs")
+}
+
+// ============================================================================
+// NOTIFICATIONS, AUDIT, CMS
+// ============================================================================
+
+enum NotificationChannel {
+  SMS
+  WHATSAPP
+  EMAIL
+  IN_APP
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+model Notification {
+  id        String              @id @default(cuid())
+  userId    String
+  user      AppUser             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  channel   NotificationChannel
+  payload   Json
+  status    NotificationStatus  @default(QUEUED)
+  sentAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+/// Append-only. Every admin mutation records before/after (brief §4.3).
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  actor       AppUser? @relation("AuditActor", fields: [actorUserId], references: [id])
+  action      String // "commission_rule.update", "kyc.approve", ...
+  entity      String
+  entityId    String?
+  before      Json?
+  after       Json?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
+}
+
+enum ContentType {
+  BANNER
+  ANNOUNCEMENT
+  PAGE
+}
+
+/// [SCHEMA-ONLY] CMS-lite: banners/announcements without a deploy (brief §3.3).
+model ContentBlock {
+  id              String      @id @default(cuid())
+  key             String      @unique
+  type            ContentType
+  payload         Json
+  isPublished     Boolean     @default(false)
+  startsAt        DateTime?
+  endsAt          DateTime?
+  updatedByUserId String?
+  updatedAt       DateTime    @updatedAt
+  createdAt       DateTime    @default(now())
+
+  @@map("content_blocks")
+}

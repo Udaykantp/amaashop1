@@ -1,0 +1,32 @@
+/node_modules
+/.next/
+/out/
+/build
+.env.local
+.env*.local
+
+# Firebase / GCP service-account keys — NEVER commit
+*-firebase-adminsdk-*.json
+service-account*.json
+*.serviceaccount.json
+next-env.d.ts
+.DS_Store
+*.pem
+.vercel
+npm-debug.log*
+
+# local dev
+.pgdata
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+firebase-export-*
+
+# cloud functions build output
+/functions/node_modules
+/functions/lib
+/functions/.env.local
+
+# Local safety copies written by scripts/migrate-to-binary.ts (member + tree rows) — keep out of git
+scripts/network-backup-*.json
+/_appcopy

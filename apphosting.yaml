@@ -1,0 +1,133 @@
+# Firebase App Hosting — production backend config for AmaaShop.
+# Docs: https://firebase.google.com/docs/app-hosting/configure
+#
+# Secrets (referenced below with `secret:`) must first be created in
+# Cloud Secret Manager and granted to the backend — see deploy runbook:
+#   firebase apphosting:secrets:set <NAME>
+#   firebase apphosting:secrets:grantaccess <NAME> --backend <backend-id>
+
+runConfig:
+  cpu: 1
+  memoryMiB: 1024          # Next 15 SSR + firebase-admin + sharp; 512 is too tight
+  minInstances: 0
+  maxInstances: 10
+  concurrency: 80
+
+env:
+  # ─────────────────────────────────────────────────────────────────────
+  # Public — shipped in the client bundle, safe to commit. Needed at BUILD.
+  # ─────────────────────────────────────────────────────────────────────
+  - variable: NEXT_PUBLIC_SITE_URL
+    value: https://amaashop-backend--amaashop-80cfd.us-central1.hosted.app   # swap for the custom domain once attached, then redeploy
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_API_KEY
+    value: AIzaSyBqaA4zyZH0_jvw7jdeNa3Lrxx_rEqhMQ8
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+    value: amaashop-80cfd.firebaseapp.com
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+    value: amaashop-80cfd
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+    value: amaashop-80cfd.firebasestorage.app
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+    value: "710003828361"
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_APP_ID
+    value: "1:710003828361:web:e9b482d319990c97364858"
+    availability: [BUILD, RUNTIME]
+  - variable: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
+    value: G-VNWSYQSDVX
+    availability: [BUILD, RUNTIME]
+  # Cloudflare Turnstile site key for the mandatory /join registration gate.
+  # WITHOUT this (and the TURNSTILE_SECRET_KEY secret below) the gate's CAPTCHA
+  # is disabled and the form has no bot protection. Fill in and uncomment.
+  # - variable: NEXT_PUBLIC_TURNSTILE_SITE_KEY
+  #   value: 0x4AAAAAAA...
+  #   availability: [BUILD, RUNTIME]
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Non-secret server config — runtime only.
+  # ─────────────────────────────────────────────────────────────────────
+  - variable: GCLOUD_PROJECT
+    value: amaashop-80cfd
+    availability: [RUNTIME]
+  - variable: SUPER_ADMIN_ALLOWLIST
+    value: ashokkumarmoharana05@gmail.com
+    availability: [RUNTIME]
+  - variable: BOOTSTRAP_SUPER_ADMIN_EMAIL
+    value: ashokkumarmoharana05@gmail.com
+    availability: [RUNTIME]
+  - variable: SESSION_COOKIE_NAME
+    value: amaashop_session
+    availability: [RUNTIME]
+  # Storefront-only "under construction" page (src/middleware.ts). Admin and
+  # /office stay reachable. Flip to "false" and redeploy to go live again —
+  # no other code changes needed.
+  - variable: MAINTENANCE_MODE
+    value: "true"
+    availability: [RUNTIME]
+  - variable: SESSION_COOKIE_MAX_AGE_DAYS
+    value: "5"
+    availability: [RUNTIME]
+  - variable: PAYMENT_PROVIDER
+    value: SIMULATED
+    availability: [RUNTIME]
+  - variable: SCRAPER_API_TIMEOUT_MS
+    value: "15000"
+    availability: [RUNTIME]
+  - variable: COMPETITOR_PRICE_TTL_HOURS
+    value: "24"
+    availability: [RUNTIME]
+  - variable: GCS_PROJECT_ID
+    value: amaashop-80cfd
+    availability: [RUNTIME]
+  - variable: GCS_BUCKET_MEDIA
+    value: amaashop-80cfd-media
+    availability: [RUNTIME]
+  # KYC (distributor back-office) — set once the private bucket exists, else
+  # KYC code paths will throw. Storefront/admin catalog do not need it.
+  # - variable: GCS_BUCKET_KYC
+  #   value: amaashop-80cfd-kyc
+  #   availability: [RUNTIME]
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Secrets — Cloud Secret Manager. Never inline these values.
+  # ─────────────────────────────────────────────────────────────────────
+  - variable: FIREBASE_SERVICE_ACCOUNT_JSON
+    secret: FIREBASE_SERVICE_ACCOUNT_JSON
+    availability: [RUNTIME]
+  - variable: FIELD_ENCRYPTION_KEY
+    secret: FIELD_ENCRYPTION_KEY
+    availability: [RUNTIME]
+  - variable: BLIND_INDEX_KEY
+    secret: BLIND_INDEX_KEY
+    availability: [RUNTIME]
+  - variable: WORKER_SHARED_SECRET
+    secret: WORKER_SHARED_SECRET
+    availability: [RUNTIME]
+  - variable: PRICE_COMPARE_REVALIDATE_SECRET
+    secret: PRICE_COMPARE_REVALIDATE_SECRET
+    availability: [RUNTIME]
+  # Cloudflare Turnstile secret — verifies the /join gate CAPTCHA server-side.
+  # Create it, then uncomment (pairs with NEXT_PUBLIC_TURNSTILE_SITE_KEY above):
+  #   firebase apphosting:secrets:set TURNSTILE_SECRET_KEY
+  #   firebase apphosting:secrets:grantaccess TURNSTILE_SECRET_KEY --backend <backend-id>
+  # - variable: TURNSTILE_SECRET_KEY
+  #   secret: TURNSTILE_SECRET_KEY
+  #   availability: [RUNTIME]
+  # Resend API key — sends password-reset emails from our own verified domain
+  # instead of Firebase Auth's built-in mailer, which reliably lands in spam.
+  # Without this, password reset silently falls back to that Firebase mailer.
+  # Verify amaashop.com at https://resend.com/domains, create a key at
+  # https://resend.com/api-keys, then:
+  #   firebase apphosting:secrets:set RESEND_API_KEY
+  #   firebase apphosting:secrets:grantaccess RESEND_API_KEY --backend <backend-id>
+  # - variable: RESEND_API_KEY
+  #   secret: RESEND_API_KEY
+  #   availability: [RUNTIME]
+  # - variable: EMAIL_FROM_ADDRESS
+  #   value: AmaaShop <noreply@amaashop.com>
+  #   availability: [RUNTIME]

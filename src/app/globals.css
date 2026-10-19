@@ -1,0 +1,150 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ───────────────────────────────────────────────────────────────────────────
+   AmaaShop design tokens — "Herbal green + cream"
+   Household / wellness FMCG brand with a trust/finance register on money
+   screens. All colours are HSL channels so Tailwind can apply opacity.
+   Change tokens here, never hard-code hex in components.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@layer base {
+  :root {
+    /* surfaces */
+    --background: 40 33% 97%; /* cream */
+    --foreground: 160 14% 14%; /* near-black desaturated green */
+    --card: 0 0% 100%;
+    --card-foreground: 160 14% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 160 14% 14%;
+
+    /* brand */
+    --primary: 151 42% 30%; /* deep herbal green */
+    --primary-foreground: 40 33% 97%;
+    --secondary: 146 24% 91%; /* soft sage */
+    --secondary-foreground: 154 30% 20%;
+    --muted: 40 20% 93%;
+    --muted-foreground: 155 8% 40%;
+    --accent: 38 92% 50%; /* amber — money, primary CTAs */
+    --accent-foreground: 30 45% 14%;
+
+    /* semantic */
+    --success: 150 52% 33%; /* positive money / credited */
+    --success-foreground: 40 33% 97%;
+    --warning: 33 90% 46%;
+    --warning-foreground: 30 45% 14%;
+    --destructive: 0 68% 45%; /* clawback / errors */
+    --destructive-foreground: 40 33% 97%;
+
+    /* lines & focus */
+    --border: 40 16% 86%;
+    --input: 40 16% 86%;
+    --ring: 151 42% 30%;
+
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    --background: 162 20% 8%;
+    --foreground: 40 18% 92%;
+    --card: 162 17% 11%;
+    --card-foreground: 40 18% 92%;
+    --popover: 162 17% 11%;
+    --popover-foreground: 40 18% 92%;
+
+    --primary: 150 44% 44%;
+    --primary-foreground: 162 30% 8%;
+    --secondary: 158 14% 18%;
+    --secondary-foreground: 40 18% 92%;
+    --muted: 158 12% 16%;
+    --muted-foreground: 150 8% 62%;
+    --accent: 38 88% 55%;
+    --accent-foreground: 30 45% 12%;
+
+    --success: 150 46% 46%;
+    --success-foreground: 162 30% 8%;
+    --warning: 33 84% 55%;
+    --warning-foreground: 30 45% 12%;
+    --destructive: 0 60% 55%;
+    --destructive-foreground: 162 30% 8%;
+
+    --border: 158 12% 20%;
+    --input: 158 12% 20%;
+    --ring: 150 44% 44%;
+  }
+
+  /* ── Admin workspace accent ──────────────────────────────────────────────
+     The admin shell carries a per-workspace hue so operators always know
+     whether they're in the Store (sky) or the MLM network (violet) context.
+     `data-admin-ws` is set server-side from a cookie and live-updated by the
+     sidebar toggle. */
+  [data-admin-shell] {
+    --ws: 205 90% 42%;
+    --ws-soft: 205 80% 96%;
+    --ws-line: 205 65% 80%;
+  }
+  [data-admin-shell][data-admin-ws="mlm"] {
+    --ws: 262 68% 54%;
+    --ws-soft: 264 70% 97%;
+    --ws-line: 262 50% 85%;
+  }
+  .dark [data-admin-shell] {
+    --ws: 205 82% 62%;
+    --ws-soft: 205 45% 13%;
+    --ws-line: 205 35% 26%;
+  }
+  .dark [data-admin-shell][data-admin-ws="mlm"] {
+    --ws: 262 70% 70%;
+    --ws-soft: 262 38% 16%;
+    --ws-line: 262 32% 30%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Tabular figures wherever money is shown — columns of rupees must align. */
+  .tabular-nums,
+  [data-money] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Mobile safe-area padding for notched devices */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  /* Hide scrollbar on horizontal-scroll carousels (categories, promo rows) */
+  .no-scrollbar {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

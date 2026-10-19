@@ -1,0 +1,148 @@
+{
+  "indexes": [
+    { "collectionGroup": "network_closure", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "descendantId", "order": "ASCENDING" },
+      { "fieldPath": "depth", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "network_closure", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "ancestorId", "order": "ASCENDING" },
+      { "fieldPath": "depth", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "network_closure", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "ancestorId", "order": "ASCENDING" },
+      { "fieldPath": "depth", "order": "ASCENDING" },
+      { "fieldPath": "descendantJoinedAt", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "member_profiles", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "sponsorId", "order": "ASCENDING" },
+      { "fieldPath": "status", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "member_applications", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "member_applications", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "sponsorId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "products", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "isFeatured", "order": "DESCENDING" },
+      { "fieldPath": "updatedAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "products", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "categoryId", "order": "ASCENDING" },
+      { "fieldPath": "updatedAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "products", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "categoryId", "order": "ASCENDING" },
+      { "fieldPath": "isFeatured", "order": "DESCENDING" },
+      { "fieldPath": "updatedAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "products", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "isPopular", "order": "ASCENDING" },
+      { "fieldPath": "updatedAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "products", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "isLatest", "order": "ASCENDING" },
+      { "fieldPath": "publishedAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "reviews", "queryScope": "COLLECTION_GROUP", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "orders", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "userId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "guest_orders", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "customer_email", "order": "ASCENDING" },
+      { "fieldPath": "created_at", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "orders", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "customerEmail", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "orders", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "commission_ledger_entries", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "beneficiaryId", "order": "ASCENDING" },
+      { "fieldPath": "type", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "commission_ledger_entries", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "runId", "order": "ASCENDING" },
+      { "fieldPath": "status", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "wallet_transactions", "queryScope": "COLLECTION_GROUP", "fields": [
+      { "fieldPath": "walletId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "payout_items", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "batchId", "order": "ASCENDING" },
+      { "fieldPath": "status", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "domain_events", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "audit_logs", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "entity", "order": "ASCENDING" },
+      { "fieldPath": "entityId", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "audit_logs", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "actorUserId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "notifications", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "userId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "product_variants", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "isActive", "order": "ASCENDING" },
+      { "fieldPath": "productId", "order": "ASCENDING" },
+      { "fieldPath": "weightGrams", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "products", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "isFeatured", "order": "ASCENDING" },
+      { "fieldPath": "updatedAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "orders", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "type", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "orders", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "type", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "payments", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "orderId", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "kyc_profiles", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "submittedAt", "order": "ASCENDING" }
+    ] },
+    { "collectionGroup": "audit_logs", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "action", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "commission_rule_sets", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "effectiveFrom", "order": "DESCENDING" }
+    ] },
+    { "collectionGroup": "commission_ledger_entries", "queryScope": "COLLECTION", "fields": [
+      { "fieldPath": "beneficiaryId", "order": "ASCENDING" },
+      { "fieldPath": "status", "order": "ASCENDING" },
+      { "fieldPath": "createdAt", "order": "DESCENDING" }
+    ] }
+  ],
+  "fieldOverrides": []
+}
