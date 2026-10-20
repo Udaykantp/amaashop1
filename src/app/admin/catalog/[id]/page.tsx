@@ -51,7 +51,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
     pv: product.pv,
     bv: product.bv,
     autoshipEligible: product.autoshipEligible,
-    images: product.images,
+    images: product.images.map((img) => ({ url: img.url, alt: img.alt ?? "" })),
     metaTitle: product.metaTitle ?? "",
     metaDescription: product.metaDescription ?? "",
     ogImageUrl: product.ogImageUrl ?? "",

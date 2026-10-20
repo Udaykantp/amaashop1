@@ -3,11 +3,8 @@
   "version": "1.0.1",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": "20"
-  },
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3000 -H 0.0.0.0",
     "dev:emulators": "firebase emulators:start --only auth,firestore --project amaashop-80cfd",
     "dev:all": "concurrently -k -n auth,web -c yellow,green \"npm:dev:emulators\" \"npm:dev\"",
     "emulators": "firebase emulators:start --only auth,firestore --project amaashop-80cfd",
@@ -16,18 +13,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "db:seed": "dotenv -e .env.local -- tsx scripts/seed-base.ts",
-    "office:seed": "dotenv -e .env.local -- tsx scripts/seed-distributor.ts",
-    "admin:create": "dotenv -e .env.local -- tsx scripts/create-super-admin.ts",
-    "admin:set-phone": "dotenv -e .env.local -- tsx scripts/set-admin-phone.ts",
-    "catalog:seed": "dotenv -e .env.local -- tsx scripts/seed-catalog.ts",
-    "db:seed:prod": "tsx scripts/seed-base.ts && tsx scripts/seed-catalog.ts",
-    "functions:deploy": "firebase deploy --only functions --project amaashop-80cfd",
-    "verify": "dotenv -e .env.local -- node scripts/verify-auth.mjs && dotenv -e .env.local -- node scripts/verify-genealogy.mjs && dotenv -e .env.local -- node scripts/verify-move.mjs",
-    "network:migrate-binary": "dotenv -e .env.local -- tsx scripts/migrate-to-binary.ts",
-    "network:migrate-binary:apply": "dotenv -e .env.local -- tsx scripts/migrate-to-binary.ts --apply",
-    "migrate:to-firestore": "prisma generate && dotenv -e .env.local -- tsx scripts/migrate-to-firestore.ts"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.4",
@@ -55,8 +41,6 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
-    "@prisma/client": "^6.2.1",
-    "@supabase/supabase-js": "^2.49.4",
     "@types/node": "^22.10.7",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.0.7",
@@ -66,9 +50,7 @@
     "dotenv-cli": "^7.4.4",
     "eslint": "^9.18.0",
     "eslint-config-next": "^15.1.6",
-    "firebase-tools": "^15.24.0",
     "postcss": "^8.5.1",
-    "prisma": "^6.2.1",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",

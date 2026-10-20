@@ -124,79 +124,43 @@ async function inventoryTotals(productIds: string[]): Promise<Map<string, number
   return totals;
 }
 
+// DATABASE COMMENTED OUT — USING MOCK DATA
+import { MOCK_CATEGORIES, MOCK_PRODUCTS } from "@/lib/data/mock-catalog";
+
 export async function listProducts(params: ListProductsParams = {}) {
   const page = Math.max(1, params.page ?? 1);
   const perPage = Math.min(Math.max(params.perPage ?? 20, 5), 100);
   const q = params.q?.trim().toLowerCase();
-  const firestore = db();
-  const [orderField, orderDir] = ORDER_BY[params.sort ?? "updated_desc"];
 
-  // Sort is one of 6 user-selectable fields crossed with an optional status
-  // and/or category filter — indexing every combination isn't practical, so
-  // (like the `q` search path) this always fetches via equality filters only
-  // (which never need a composite index) and sorts/paginates in memory.
-  // Fine at today's catalog size.
-  const baseQuery = () => {
-    let query: FirebaseFirestore.Query = firestore.collection(Collections.products);
-    if (params.status && params.status !== "ALL") query = query.where("status", "==", params.status);
-    if (params.categoryId) query = query.where("categoryId", "==", params.categoryId);
-    return query;
-  };
-
-  const snap = await baseQuery().limit(SEARCH_SCAN_LIMIT).get();
-  let all = snap.docs.map((d) => ({ id: d.id, data: d.data() as ProductDoc }));
+  let all = MOCK_PRODUCTS.map((p) => ({
+    id: p.id,
+    sku: p.sku,
+    name: p.name,
+    slug: p.slug,
+    status: "ACTIVE" as ProductStatus,
+    categoryName: p.categories?.name ?? null,
+    imageUrl: p.image_url,
+    mrp: String(p.old_price ?? p.price),
+    sellingPrice: String(p.price),
+    discountPct: p.old_price ? discountPct(p.old_price, p.price) : 0,
+    pv: String(p.pv),
+    bv: String(p.bv),
+    stock: p.stock,
+    isFeatured: p.is_featured,
+    updatedAt: p.created_at,
+  }));
 
   if (q) {
     all = all.filter(
       (r) =>
-        r.data.name.toLowerCase().includes(q) ||
-        r.data.sku.toLowerCase().includes(q) ||
-        r.data.slug.toLowerCase().includes(q) ||
-        r.data.brand?.toLowerCase().includes(q) ||
-        r.data.tags.some((t) => t.toLowerCase() === q),
+        r.name.toLowerCase().includes(q) ||
+        r.sku.toLowerCase().includes(q) ||
+        r.slug.toLowerCase().includes(q),
     );
   }
 
   const total = all.length;
-  const dir = orderDir === "asc" ? 1 : -1;
-  all.sort((a, b) => {
-    const av = a.data[orderField as keyof ProductDoc];
-    const bv = b.data[orderField as keyof ProductDoc];
-    if (av == null || bv == null) return 0;
-    const an = av instanceof Object && "toMillis" in av ? (av as FirebaseFirestore.Timestamp).toMillis() : av;
-    const bn = bv instanceof Object && "toMillis" in bv ? (bv as FirebaseFirestore.Timestamp).toMillis() : bv;
-    return an < bn ? -1 * dir : an > bn ? 1 * dir : 0;
-  });
-  const rows = all.slice((page - 1) * perPage, (page - 1) * perPage + perPage);
-
-  const categoryIds = [...new Set(rows.map((r) => r.data.categoryId).filter((x): x is string => !!x))];
-  const [categorySnaps, stockByProduct] = await Promise.all([
-    categoryIds.length ? firestore.getAll(...categoryIds.map((id) => firestore.collection(Collections.categories).doc(id))) : [],
-    inventoryTotals(rows.map((r) => r.id)),
-  ]);
-  const categoriesById = new Map(categorySnaps.filter((s) => s.exists).map((s) => [s.id, s.data() as { name: string }]));
-
-  const list: ProductListRow[] = rows.map((r) => {
-    const mrp = Number(r.data.mrp);
-    const sp = Number(r.data.sellingPrice);
-    return {
-      id: r.id,
-      sku: r.data.sku,
-      name: r.data.name,
-      slug: r.data.slug,
-      status: r.data.status,
-      categoryName: r.data.categoryId ? (categoriesById.get(r.data.categoryId)?.name ?? null) : null,
-      imageUrl: r.data.imageUrl,
-      mrp: r.data.mrp,
-      sellingPrice: r.data.sellingPrice,
-      discountPct: discountPct(mrp, sp),
-      pv: r.data.pv,
-      bv: r.data.bv,
-      stock: stockByProduct.get(r.id) ?? 0,
-      isFeatured: r.data.isFeatured,
-      updatedAt: r.data.updatedAt.toDate().toISOString(),
-    };
-  });
+  const list = all.slice((page - 1) * perPage, page * perPage);
 
   return { list, total, page, perPage, pageCount: Math.max(1, Math.ceil(total / perPage)) };
 }
@@ -204,92 +168,57 @@ export async function listProducts(params: ListProductsParams = {}) {
 // ── form data ─────────────────────────────────────────────────────────────
 
 export async function getCatalogFormData() {
-  const firestore = db();
-  const [categoriesSnap, warehousesSnap] = await Promise.all([
-    firestore.collection(Collections.categories).orderBy("sortOrder", "asc").get(),
-    firestore.collection(Collections.warehouses).orderBy("name", "asc").get(),
-  ]);
-  const categories = categoriesSnap.docs.map((d) => ({ id: d.id, name: (d.data() as { name: string }).name }));
-
-  const siteIds = [...new Set(warehousesSnap.docs.map((d) => (d.data() as { siteId: string }).siteId))];
-  const siteSnaps = siteIds.length ? await firestore.getAll(...siteIds.map((id) => firestore.collection(Collections.sites).doc(id))) : [];
-  const sitesById = new Map(siteSnaps.filter((s) => s.exists).map((s) => [s.id, s.data() as { name: string }]));
-
-  const warehouses = warehousesSnap.docs.map((d) => {
-    const w = d.data() as { name: string; siteId: string };
-    return { id: d.id, name: w.name, siteName: sitesById.get(w.siteId)?.name ?? "" };
-  });
-
+  const categories = MOCK_CATEGORIES.map((c) => ({ id: c.id, name: c.name }));
+  const warehouses = [
+    { id: "wh-1", name: "Bengaluru Central Hub", siteName: "Karnataka" },
+    { id: "wh-2", name: "Delhi NCR Hub", siteName: "Delhi" },
+  ];
   return { categories, warehouses };
 }
 
 // ── detail (edit) ─────────────────────────────────────────────────────────
 
 export async function getProductForEdit(id: string) {
-  const firestore = db();
-  const snap = await firestore.collection(Collections.products).doc(id).get();
-  if (!snap.exists) return null;
-  const p = snap.data() as ProductDoc;
-
-  const [imagesSnap, categorySnap, inventorySnap] = await Promise.all([
-    firestore.collection(Collections.products).doc(id).collection("images").orderBy("position", "asc").get(),
-    p.categoryId ? firestore.collection(Collections.categories).doc(p.categoryId).get() : Promise.resolve(null),
-    firestore.collection(Collections.inventoryItems).where("productId", "==", id).get(),
-  ]);
-  const userIds = [p.createdByUserId, p.updatedByUserId].filter((x): x is string => !!x);
-  const userSnaps = userIds.length ? await firestore.getAll(...userIds.map((uid) => firestore.collection(Collections.appUsers).doc(uid))) : [];
-  const usersByUid = new Map(userSnaps.filter((s) => s.exists).map((s) => [s.id, s.data() as AppUserDoc]));
-  const label = (uid: string | null) => {
-    if (!uid) return null;
-    const u = usersByUid.get(uid);
-    return u?.displayName ?? u?.email ?? null;
-  };
-
-  const stock = inventorySnap.docs.reduce((n, d) => n + (d.data() as { qtyAvailable: number }).qtyAvailable, 0);
+  const p = MOCK_PRODUCTS.find((x) => x.id === id || x.slug === id);
+  if (!p) return null;
 
   return {
-    id,
+    id: p.id,
     sku: p.sku,
     name: p.name,
     slug: p.slug,
     subtitle: p.subtitle,
     description: p.description,
     brand: p.brand,
-    categoryId: p.categoryId,
-    categoryName: categorySnap?.exists ? (categorySnap.data() as { name: string }).name : null,
-    tags: p.tags,
-    status: p.status,
-    publishedAt: p.publishedAt?.toDate().toISOString() ?? null,
-    mrp: p.mrp,
-    sellingPrice: p.sellingPrice,
+    categoryId: p.category_id,
+    categoryName: p.categories?.name ?? null,
+    tags: ["herbal", "wellness", "organic"],
+    status: "ACTIVE" as ProductStatus,
+    mrp: String(p.old_price ?? p.price),
+    sellingPrice: String(p.price),
     gstRateBps: p.gstRateBps,
     hsnCode: p.hsnCode,
     gtin: p.gtin,
-    unitLabel: p.unitLabel,
+    unitLabel: p.unit,
     weightGrams: p.weightGrams,
-    pv: p.pv,
-    bv: p.bv,
-    autoshipEligible: p.autoshipEligible,
-    images: imagesSnap.docs.map((d) => {
-      const img = d.data() as ProductImageDoc;
-      return { url: img.url, alt: img.alt ?? "" };
-    }),
+    pv: String(p.pv),
+    bv: String(p.bv),
+    autoshipEligible: true,
+    images: p.images,
     metaTitle: p.metaTitle,
     metaDescription: p.metaDescription,
     ogImageUrl: p.ogImageUrl,
     canonicalUrl: p.canonicalUrl,
     noIndex: p.noIndex,
     focusKeyword: p.focusKeyword,
-    isFeatured: p.isFeatured,
-    isPopular: p.isPopular,
-    isLatest: p.isLatest,
-    rating: p.rating,
-    reviews: p.reviews,
-    stock,
-    createdAt: p.createdAt.toDate().toISOString(),
-    updatedAt: p.updatedAt.toDate().toISOString(),
-    createdBy: label(p.createdByUserId),
-    updatedBy: label(p.updatedByUserId),
+    isFeatured: p.is_featured,
+    isPopular: p.is_popular,
+    isLatest: p.is_latest,
+    stock: p.stock,
+    createdAt: p.created_at,
+    updatedAt: p.created_at,
+    createdBy: "Admin",
+    updatedBy: "Admin",
   };
 }
 

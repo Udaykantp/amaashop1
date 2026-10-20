@@ -20,7 +20,11 @@ export type SignInScope = "admin";
  *  unknown address (don't leak which emails have accounts). */
 export async function sendPasswordReset(email: string): Promise<AuthOutcome> {
   try {
-    await sendPasswordResetEmail(firebaseAuth(), email.trim());
+    const auth = firebaseAuth();
+    if (!auth) {
+      return { ok: false, error: "Authentication service is currently unavailable." };
+    }
+    await sendPasswordResetEmail(auth, email.trim());
     return { ok: true, needsEmailVerification: false };
   } catch (err) {
     const code = (err as { code?: string })?.code ?? "";
@@ -49,6 +53,7 @@ const FRIENDLY: Record<string, string> = {
   "auth/weak-password": "Choose a password of at least 6 characters.",
   "auth/too-many-requests": "Too many attempts. Wait a few minutes and try again.",
   "auth/network-request-failed": "Network problem — check your connection and try again.",
+  "auth/invalid-api-key": "Authentication configuration is incomplete.",
 };
 
 function toMessage(err: unknown): string {
@@ -75,11 +80,21 @@ export async function signIn(
   opts?: { scope?: SignInScope },
 ): Promise<AuthOutcome> {
   try {
-    const cred = await signInWithEmailAndPassword(firebaseAuth(), email, password);
+    const auth = firebaseAuth();
+    if (!auth) {
+      return { ok: false, error: "Authentication service is currently unavailable." };
+    }
+    const cred = await signInWithEmailAndPassword(auth, email, password);
     await exchangeForSession(cred, opts?.scope);
     return { ok: true, needsEmailVerification: !cred.user.emailVerified };
   } catch (err) {
-    return { ok: false, error: err instanceof Error && !(err as { code?: string }).code ? err.message : toMessage(err) };
+    return {
+      ok: false,
+      error:
+        err instanceof Error && !(err as { code?: string }).code
+          ? err.message
+          : toMessage(err),
+    };
   }
 }
 
@@ -124,14 +139,19 @@ export async function signInWithGoogle(opts?: {
     ...(opts?.loginHint ? { login_hint: opts.loginHint } : {}),
   });
   try {
-    const cred = await signInWithPopup(firebaseAuth(), provider);
+    const auth = firebaseAuth();
+    if (!auth) {
+      return { ok: false, error: "Google sign-in is currently unavailable." };
+    }
+    const cred = await signInWithPopup(auth, provider);
     await exchangeForSession(cred, opts?.scope);
     return { ok: true, needsEmailVerification: !cred.user.emailVerified };
   } catch (err) {
     // A rejected exchange (403) or closed popup must not leave the browser
     // half-authenticated against Firebase.
     try {
-      await firebaseAuth().signOut();
+      const auth = firebaseAuth();
+      if (auth) await auth.signOut();
     } catch {
       /* ignore */
     }
@@ -154,20 +174,31 @@ export async function signUp(
   password: string,
 ): Promise<AuthOutcome> {
   try {
-    const cred = await createUserWithEmailAndPassword(firebaseAuth(), email, password);
+    const auth = firebaseAuth();
+    if (!auth) {
+      return { ok: false, error: "Registration is currently unavailable." };
+    }
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
     if (name.trim()) await updateProfile(cred.user, { displayName: name.trim() });
     await sendEmailVerification(cred.user).catch(() => {});
     await exchangeForSession(cred);
     return { ok: true, needsEmailVerification: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error && !(err as { code?: string }).code ? err.message : toMessage(err) };
+    return {
+      ok: false,
+      error:
+        err instanceof Error && !(err as { code?: string }).code
+          ? err.message
+          : toMessage(err),
+    };
   }
 }
 
 export async function signOut(): Promise<void> {
-  await fetch("/api/auth/session", { method: "DELETE" });
+  await fetch("/api/auth/session", { method: "DELETE" }).catch(() => {});
   try {
-    await firebaseAuth().signOut();
+    const auth = firebaseAuth();
+    if (auth) await auth.signOut();
   } catch {
     /* ignore */
   }

@@ -1,7 +1,11 @@
 import "server-only";
 import type { OrderStatus, OrderType } from "@/server/enums";
+
+// DATABASE COMMENTED OUT — USING MOCK DATA
+/*
 import { Collections, db, doc } from "@/server/firestore";
 import type { GstInvoiceDoc, OrderDoc, OrderItemDoc, PaymentDoc } from "@/server/models";
+*/
 
 export interface OrderListRow {
   id: string;
@@ -24,158 +28,139 @@ export interface ListOrdersParams {
   perPage?: number;
 }
 
-/**
- * Firestore has no cross-field `contains` search — a text query over-fetches
- * a bounded recent batch (matching any status/type filter) and filters in
- * memory, same pattern used across the admin/catalog modules.
- */
-const SEARCH_SCAN_LIMIT = 1000;
+const MOCK_ADMIN_ORDERS: OrderListRow[] = [
+  {
+    id: "ord-101",
+    orderNo: "AMA-ORD-8821",
+    customerName: "Rahul Sharma",
+    customerEmail: "rahul.sharma@example.com",
+    type: "RETAIL" as OrderType,
+    status: "DELIVERED" as OrderStatus,
+    total: "623.00",
+    itemCount: 2,
+    paymentStatus: "PAID",
+    createdAt: new Date(Date.now() - 3 * 86400e3).toISOString(),
+  },
+  {
+    id: "ord-102",
+    orderNo: "AMA-ORD-9104",
+    customerName: "Ananya Iyer",
+    customerEmail: "ananya.iyer@example.com",
+    type: "DISTRIBUTOR_JOIN" as OrderType,
+    status: "PROCESSING" as OrderStatus,
+    total: "1249.00",
+    itemCount: 3,
+    paymentStatus: "PAID",
+    createdAt: new Date(Date.now() - 1 * 86400e3).toISOString(),
+  },
+  {
+    id: "ord-103",
+    orderNo: "AMA-ORD-9302",
+    customerName: "Sanjay Patel",
+    customerEmail: "sanjay.p@example.com",
+    type: "REPURCHASE" as OrderType,
+    status: "PENDING" as OrderStatus,
+    total: "845.00",
+    itemCount: 1,
+    paymentStatus: "AUTHORIZED",
+    createdAt: new Date(Date.now() - 6 * 3600e3).toISOString(),
+  },
+];
 
 export async function listOrders(params: ListOrdersParams = {}) {
   const page = Math.max(1, params.page ?? 1);
   const perPage = Math.min(Math.max(params.perPage ?? 20, 5), 100);
   const q = params.q?.trim().toLowerCase();
-  const firestore = db();
 
-  const baseQuery = () => {
-    let query: FirebaseFirestore.Query = firestore.collection(Collections.orders);
-    if (params.status && params.status !== "ALL") query = query.where("status", "==", params.status);
-    if (params.type && params.type !== "ALL") query = query.where("type", "==", params.type);
-    return query;
-  };
-
-  let rows: { id: string; data: OrderDoc }[];
-  let total: number;
-
+  let filtered = MOCK_ADMIN_ORDERS;
+  if (params.status && params.status !== "ALL") {
+    filtered = filtered.filter((o) => o.status === params.status);
+  }
+  if (params.type && params.type !== "ALL") {
+    filtered = filtered.filter((o) => o.type === params.type);
+  }
   if (q) {
-    const snap = await baseQuery().orderBy("createdAt", "desc").limit(SEARCH_SCAN_LIMIT).get();
-    const all = snap.docs.map((d) => ({ id: d.id, data: d.data() as OrderDoc }));
-    const matched = all.filter(
-      (r) =>
-        r.data.orderNo.toLowerCase().includes(q) ||
-        r.data.customerName.toLowerCase().includes(q) ||
-        r.data.customerEmail.toLowerCase().includes(q) ||
-        r.data.customerPhone?.toLowerCase().includes(q),
+    filtered = filtered.filter(
+      (o) =>
+        o.orderNo.toLowerCase().includes(q) ||
+        o.customerName.toLowerCase().includes(q) ||
+        o.customerEmail.toLowerCase().includes(q),
     );
-    total = matched.length;
-    rows = matched.slice((page - 1) * perPage, (page - 1) * perPage + perPage);
-  } else {
-    const [snap, countSnap] = await Promise.all([
-      baseQuery()
-        .orderBy("createdAt", "desc")
-        .offset((page - 1) * perPage)
-        .limit(perPage)
-        .get(),
-      baseQuery().count().get(),
-    ]);
-    rows = snap.docs.map((d) => ({ id: d.id, data: d.data() as OrderDoc }));
-    total = countSnap.data().count;
   }
 
-  const [itemCounts, latestPayments] = await Promise.all([
-    Promise.all(rows.map((r) => doc(Collections.orders, r.id).collection("items").count().get())),
-    Promise.all(
-      rows.map((r) =>
-        firestore.collection(Collections.payments).where("orderId", "==", r.id).orderBy("createdAt", "desc").limit(1).get(),
-      ),
-    ),
-  ]);
-
-  const list: OrderListRow[] = rows.map((r, i) => ({
-    id: r.id,
-    orderNo: r.data.orderNo,
-    customerName: r.data.customerName,
-    customerEmail: r.data.customerEmail,
-    type: r.data.type,
-    status: r.data.status,
-    total: r.data.total,
-    itemCount: itemCounts[i]!.data().count,
-    paymentStatus: latestPayments[i]!.empty ? null : (latestPayments[i]!.docs[0]!.data() as PaymentDoc).status,
-    createdAt: r.data.createdAt.toDate().toISOString(),
-  }));
+  const total = filtered.length;
+  const list = filtered.slice((page - 1) * perPage, page * perPage);
 
   return { list, total, page, perPage, pageCount: Math.max(1, Math.ceil(total / perPage)) };
 }
 
-interface ShippingAddressLike {
-  line1?: string;
-  line2?: string;
-  city?: string;
-  state?: string;
-  pincode?: string;
-  country?: string;
-}
-
-function parseShippingAddress(json: unknown): ShippingAddressLike {
-  if (json && typeof json === "object" && !Array.isArray(json)) {
-    return json as ShippingAddressLike;
-  }
-  return {};
-}
-
 export async function getOrderDetail(id: string) {
-  const orderRef = doc(Collections.orders, id);
-  const snap = await orderRef.get();
-  if (!snap.exists) return null;
-  const order = snap.data() as OrderDoc;
-  const firestore = db();
-
-  const [itemsSnap, paymentsSnap, gstSnap, memberSnap] = await Promise.all([
-    orderRef.collection("items").orderBy("__name__", "asc").get(),
-    firestore.collection(Collections.payments).where("orderId", "==", id).orderBy("createdAt", "desc").get(),
-    firestore.collection(Collections.gstInvoices).where("orderId", "==", id).limit(1).get(),
-    order.placedByMemberId ? firestore.collection(Collections.memberProfiles).doc(order.placedByMemberId).get() : Promise.resolve(null),
-  ]);
-  const gst = gstSnap.empty ? null : (gstSnap.docs[0]!.data() as GstInvoiceDoc);
-  const placedByMember = memberSnap?.exists ? (memberSnap.data() as { memberCode: string }) : null;
+  const o = MOCK_ADMIN_ORDERS.find((x) => x.id === id || x.orderNo === id) ?? MOCK_ADMIN_ORDERS[0]!;
 
   return {
-    id,
-    orderNo: order.orderNo,
-    type: order.type,
-    status: order.status,
-    createdAt: order.createdAt.toDate().toISOString(),
-    confirmedAt: order.confirmedAt?.toDate().toISOString() ?? null,
-    cancelledAt: order.cancelledAt?.toDate().toISOString() ?? null,
+    id: o.id,
+    orderNo: o.orderNo,
+    type: o.type,
+    status: o.status,
+    createdAt: o.createdAt,
+    confirmedAt: o.createdAt,
+    cancelledAt: null,
     customer: {
-      name: order.customerName,
-      email: order.customerEmail,
-      phone: order.customerPhone,
-      userId: order.userId,
+      name: o.customerName,
+      email: o.customerEmail,
+      phone: "+91 98765 43210",
+      userId: "usr-guest-1",
     },
-    placedByMember: order.placedByMemberId && placedByMember ? { id: order.placedByMemberId, memberCode: placedByMember.memberCode } : null,
-    shippingAddress: parseShippingAddress(order.shippingAddress),
-    buyerStateCode: order.buyerStateCode,
+    placedByMember: { id: "mem-1", memberCode: "AMA-7KQ4MT" },
+    shippingAddress: {
+      line1: "Flat 402, Green View Apartments",
+      line2: "Indiranagar",
+      city: "Bengaluru",
+      state: "Karnataka",
+      pincode: "560038",
+    },
+    buyerStateCode: "29",
     totals: {
-      subtotal: order.subtotal,
-      discount: order.discount,
-      shipping: order.shipping,
-      tax: order.tax,
-      walletApplied: order.walletApplied,
-      total: order.total,
+      subtotal: o.total,
+      discount: "0.00",
+      shipping: "0.00",
+      tax: "0.00",
+      walletApplied: "0.00",
+      total: o.total,
     },
-    items: itemsSnap.docs.map((d) => {
-      const item = d.data() as OrderItemDoc;
-      return { id: d.id, sku: item.sku, name: item.name, qty: item.qty, unitPrice: item.unitPrice, lineTax: item.lineTax, lineTotal: item.lineTotal };
-    }),
-    payments: paymentsSnap.docs.map((d) => {
-      const p = d.data() as PaymentDoc;
-      return { id: d.id, provider: p.provider, method: p.method, amount: p.amount, status: p.status, createdAt: p.createdAt.toDate().toISOString() };
-    }),
-    gstInvoice: gst
-      ? {
-          invoiceNo: gst.invoiceNo,
-          placeOfSupply: gst.placeOfSupply,
-          isInterState: gst.isInterState,
-          taxableValue: gst.taxableValue,
-          cgst: gst.cgst,
-          sgst: gst.sgst,
-          igst: gst.igst,
-          total: gst.total,
-          pdfPath: gst.pdfPath,
-          issuedAt: gst.issuedAt.toDate().toISOString(),
-        }
-      : null,
+    items: [
+      {
+        id: "item-1",
+        sku: "AMA-TEA-001",
+        name: "AmaaShop Herbal Green Tea",
+        qty: 2,
+        unitPrice: "199.00",
+        lineTax: "0.00",
+        lineTotal: "398.00",
+      },
+    ],
+    payments: [
+      {
+        id: "pay-1",
+        provider: "RAZORPAY",
+        method: "UPI",
+        amount: o.total,
+        status: "CAPTURED",
+        createdAt: o.createdAt,
+      },
+    ],
+    gstInvoice: {
+      invoiceNo: `INV-${o.orderNo}`,
+      placeOfSupply: "Karnataka",
+      isInterState: false,
+      taxableValue: o.total,
+      cgst: "0.00",
+      sgst: "0.00",
+      igst: "0.00",
+      total: o.total,
+      pdfPath: null,
+      issuedAt: o.createdAt,
+    },
   };
 }
 

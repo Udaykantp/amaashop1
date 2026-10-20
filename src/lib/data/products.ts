@@ -1,58 +1,103 @@
 import "server-only";
 import {
+  getMockProductById,
+  getMockProductBySlug,
+  getMockProducts,
+  getMockProductsByCategory,
+  getMockProductsByFlag,
+  getMockRelatedProducts,
+} from "@/lib/data/mock-catalog";
+import type { Product } from "@/lib/types";
+import type { PublicProductDetail } from "@/server/catalog/public";
+
+// DATABASE COMMENTED OUT — USING MOCK DATA
+/*
+import {
   getActiveProducts,
   getActiveProductSlugs,
   getAllProductsInCategory,
-  getProductDetailBySlug,
+  getProductDetailBySlug as getDbProductDetailBySlug,
   getProductForCartPublic,
   getProductsByCategorySlug,
   getProductsByFlag,
-  getProductsForSitemap,
-  getPublishedReviews,
+  getProductsForSitemap as getDbProductsForSitemap,
+  getPublishedReviews as getDbPublishedReviews,
   getRelatedProductsPublic,
 } from "@/server/catalog/public";
-import type { Product } from "@/lib/types";
+*/
 
-/**
- * Storefront product reads. These resolve against Firestore — the same
- * database the admin console writes to — so a product published in
- * `/admin/catalog` appears here immediately (subject to the ISR window).
- *
- * Function names + return shapes are unchanged; every consumer (home, shop,
- * PDP, search, sitemap, cart) keeps working as-is.
- */
+export const getPopularProducts = async (): Promise<Product[]> => getMockProductsByFlag("popular");
+export const getLatestProducts = async (): Promise<Product[]> => getMockProductsByFlag("latest");
+export const getFeaturedProducts = async (): Promise<Product[]> => getMockProductsByFlag("featured");
 
-export const getPopularProducts = (): Promise<Product[]> => getProductsByFlag("popular");
-export const getLatestProducts = (): Promise<Product[]> => getProductsByFlag("latest");
-export const getFeaturedProducts = (): Promise<Product[]> => getProductsByFlag("featured");
-
-/** Home "Dairy & Eggs" rail — falls back to newest active products if that
- *  category has nothing live yet. */
+/** Home "Dairy & Eggs" rail */
 export const getBreakfastProducts = async (): Promise<Product[]> => {
-  const byCat = await getProductsByCategorySlug("dairy-eggs");
-  return byCat.length ? byCat : getProductsByFlag("latest");
+  const byCat = getMockProductsByCategory("dairy-eggs");
+  return byCat.length ? byCat : getMockProductsByFlag("latest");
 };
 
-export const getAllProducts = (): Promise<Product[]> => getActiveProducts();
+export const getAllProducts = async (): Promise<Product[]> => getMockProducts();
 
 export const getProductBySlug = async (slug: string): Promise<Product | null> => {
-  return getProductDetailBySlug(slug);
+  return getMockProductBySlug(slug);
 };
 
 /** Rich detail (all SEO fields + gallery) for the PDP. */
-export { getProductDetailBySlug };
+export const getProductDetailBySlug = async (slug: string): Promise<PublicProductDetail | null> => {
+  return getMockProductBySlug(slug);
+};
+
 export type { PublicProductDetail } from "@/server/catalog/public";
 
-export const getRelatedProducts = (categoryId: string, excludeId: string): Promise<Product[]> =>
-  getRelatedProductsPublic(categoryId, excludeId);
+export const getRelatedProducts = async (categoryId: string, excludeId: string): Promise<Product[]> =>
+  getMockRelatedProducts(categoryId, excludeId);
 
-export const getAllProductSlugs = (): Promise<{ slug: string }[]> => getActiveProductSlugs();
+export const getAllProductSlugs = async (): Promise<{ slug: string }[]> => {
+  return getMockProducts().map((p) => ({ slug: p.slug }));
+};
 
-export const getProductsForCategoryPage = (slug: string): Promise<Product[]> =>
-  getAllProductsInCategory(slug);
+export const getProductsForCategoryPage = async (slug: string): Promise<Product[]> => {
+  return getMockProductsByCategory(slug);
+};
 
-export { getProductsForSitemap, getPublishedReviews };
-export type { PublicReview } from "@/server/catalog/public";
+export interface PublicReview {
+  id: string;
+  rating: number;
+  author: string;
+  title: string | null;
+  body: string | null;
+  createdAt: string;
+}
 
-export const getProductForCart = (productId: string): Promise<Product | null> =>
-  getProductForCartPublic(productId);
+export const getPublishedReviews = async (productId: string): Promise<PublicReview[]> => {
+  return [
+    {
+      id: "rev-1",
+      rating: 5,
+      author: "Pooja Sharma",
+      title: "Authentic quality & aroma",
+      body: "Loved the quality and packaging. Genuine herbal product, delivered very quickly.",
+      createdAt: new Date(Date.now() - 5 * 86400e3).toISOString(),
+    },
+    {
+      id: "rev-2",
+      rating: 5,
+      author: "Vikram Mehta",
+      title: "Highly recommended",
+      body: "Clean ingredients and honest pricing. Will definitely repurchase again.",
+      createdAt: new Date(Date.now() - 12 * 86400e3).toISOString(),
+    },
+  ];
+};
+
+export const getProductsForSitemap = async (): Promise<{ slug: string; updatedAt: Date; image: string | null }[]> => {
+  return getMockProducts().map((p) => ({
+    slug: p.slug,
+    updatedAt: new Date(),
+    image: p.image_url,
+  }));
+};
+
+export const getProductForCart = async (productId: string): Promise<Product | null> => {
+  return getMockProductById(productId);
+};

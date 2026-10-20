@@ -123,7 +123,7 @@ export default async function ProductPage({ params }: ProductPageProps) {
     author: r.author,
     rating: r.rating,
     title: r.title,
-    body: r.body,
+    body: r.body ?? undefined,
     datePublished: r.createdAt,
   }));
 

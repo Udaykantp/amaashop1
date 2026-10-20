@@ -14,30 +14,66 @@ import { connectAuthEmulator, getAuth, type Auth } from "firebase/auth";
  */
 
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  apiKey:
+    process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
+    "AIzaSyBqaA4zyZH0_jvw7jdeNa3Lrxx_rEqhMQ8",
+  authDomain:
+    process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ||
+    "amaashop-80cfd.firebaseapp.com",
+  projectId:
+    process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ||
+    "amaashop-80cfd",
+  storageBucket:
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+    "amaashop-80cfd.firebasestorage.app",
+  messagingSenderId:
+    process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ||
+    "710003828361",
+  appId:
+    process.env.NEXT_PUBLIC_FIREBASE_APP_ID ||
+    "1:710003828361:web:e9b482d319990c97364858",
+  measurementId:
+    process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID ||
+    "G-VNWSYQSDVX",
 };
 
 let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 
-export function firebaseApp(): FirebaseApp {
-  if (!app) app = getApps()[0] ?? initializeApp(firebaseConfig);
-  return app;
+export function firebaseApp(): FirebaseApp | null {
+  if (typeof window === "undefined") return null;
+  if (!app) {
+    try {
+      const existing = getApps()[0];
+      if (existing) {
+        app = existing;
+      } else if (firebaseConfig.apiKey) {
+        app = initializeApp(firebaseConfig);
+      }
+    } catch (err) {
+      console.warn("Firebase App initialization skipped:", err);
+      return null;
+    }
+  }
+  return app ?? null;
 }
 
-export function firebaseAuth(): Auth {
+export function firebaseAuth(): Auth | null {
+  if (typeof window === "undefined") return null;
   if (auth) return auth;
-  auth = getAuth(firebaseApp());
 
-  const emu = process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST;
-  if (emu) {
-    connectAuthEmulator(auth, `http://${emu}`, { disableWarnings: true });
+  try {
+    const initializedApp = firebaseApp();
+    if (!initializedApp) return null;
+    auth = getAuth(initializedApp);
+
+    const emu = process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST;
+    if (emu) {
+      connectAuthEmulator(auth, `http://${emu}`, { disableWarnings: true });
+    }
+    return auth;
+  } catch (err) {
+    console.warn("Firebase Auth initialization skipped:", err);
+    return null;
   }
-  return auth;
 }

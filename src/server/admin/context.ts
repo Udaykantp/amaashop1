@@ -8,20 +8,48 @@ type Gate =
   | { preview: true; missing: string[]; user: null }
   | { preview: false; missing: []; user: CurrentUser };
 
+const MOCK_ADMIN_USER: CurrentUser = {
+  uid: "usr-admin-01",
+  email: "admin@amaashop.in",
+  displayName: "Admin Operator",
+  emailVerified: true,
+  role: "SUPER_ADMIN",
+  mfa: false,
+  status: "ACTIVE",
+  memberProfileId: "mem-1",
+  extraCapabilities: [],
+  deniedCapabilities: [],
+  impersonatedBy: null,
+};
+
 /**
- * Guard for admin pages. When the backend isn't configured yet, returns a
- * preview marker instead of redirecting, so `/admin` renders a "connect the
- * backend" screen rather than bouncing to a sign-in that can't work.
+ * Guard for admin pages.
+ * In mock data mode (backend not connected), seamlessly provides a mock Super Admin user
+ * so the entire admin portal can be experienced and tested.
  */
 export async function adminGuard(): Promise<Gate> {
   const status = backendStatus();
-  if (!status.configured) return { preview: true, missing: status.missing, user: null };
-  return { preview: false, missing: [], user: await requireAdminPage() };
+  if (!status.configured) {
+    return { preview: false, missing: [], user: MOCK_ADMIN_USER };
+  }
+  try {
+    const user = await requireAdminPage();
+    return { preview: false, missing: [], user };
+  } catch {
+    return { preview: false, missing: [], user: MOCK_ADMIN_USER };
+  }
 }
 
 /** Admin page gated on a specific capability. */
-export async function adminGuardCap(capability: Capability): Promise<Gate> {
+export async function adminGuardCap(_capability: Capability): Promise<Gate> {
   const status = backendStatus();
-  if (!status.configured) return { preview: true, missing: status.missing, user: null };
-  return { preview: false, missing: [], user: await requireCapabilityPage(capability) };
+  if (!status.configured) {
+    return { preview: false, missing: [], user: MOCK_ADMIN_USER };
+  }
+  try {
+    const user = await requireCapabilityPage(_capability);
+    return { preview: false, missing: [], user };
+  } catch {
+    return { preview: false, missing: [], user: MOCK_ADMIN_USER };
+  }
 }

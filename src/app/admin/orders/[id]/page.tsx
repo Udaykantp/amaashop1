@@ -86,7 +86,9 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
             {addr.line1 ? <p>{addr.line1}</p> : null}
             {addr.line2 ? <p>{addr.line2}</p> : null}
             <p>{addrLine2 || "—"}</p>
-            {addr.country ? <p>{addr.country}</p> : null}
+            {"country" in addr && (addr as { country?: string }).country ? (
+              <p>{(addr as { country?: string }).country}</p>
+            ) : null}
             {order.buyerStateCode ? (
               <p className="pt-1 text-xs text-muted-foreground">GST state code: {order.buyerStateCode}</p>
             ) : null}

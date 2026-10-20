@@ -29,8 +29,14 @@ export function initAnalytics(): Promise<Analytics | null> {
     if (process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST) return null;
     if (!(await isSupported().catch(() => false))) return null;
 
-    analytics = getAnalytics(firebaseApp());
-    return analytics;
+    const app = firebaseApp();
+    if (!app) return null;
+    try {
+      analytics = getAnalytics(app);
+      return analytics;
+    } catch {
+      return null;
+    }
   })();
 
   return pending;

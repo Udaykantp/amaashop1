@@ -52,7 +52,17 @@ export function AccountMenu() {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    return onAuthStateChanged(firebaseAuth(), (u) => setUser(u));
+    const auth = firebaseAuth();
+    if (!auth) {
+      setUser(null);
+      return;
+    }
+    try {
+      return onAuthStateChanged(auth, (u) => setUser(u));
+    } catch (err) {
+      console.warn("Failed to attach auth state listener:", err);
+      setUser(null);
+    }
   }, []);
 
   // Close on route change.

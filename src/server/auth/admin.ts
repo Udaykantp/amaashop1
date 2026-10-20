@@ -1,7 +1,7 @@
 import "server-only";
 import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
 import { getAuth, type Auth } from "firebase-admin/auth";
-import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import type { Firestore } from "firebase-admin/firestore";
 
 /**
  * Firebase Admin SDK singleton (server only). Verifies session cookies / ID
@@ -63,8 +63,11 @@ export function adminAuth(): Auth {
   return getAuth(firebaseAdmin());
 }
 
+import { db } from "@/server/firestore";
+
 export function adminFirestore(): Firestore {
-  return getFirestore(firebaseAdmin());
+  // DATABASE COMMENTED OUT — return in-memory mock Firestore
+  return db();
 }
 
 export const usingAuthEmulator = (): boolean => Boolean(process.env.FIREBASE_AUTH_EMULATOR_HOST);

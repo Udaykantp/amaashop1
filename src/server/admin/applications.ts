@@ -1,7 +1,11 @@
 import "server-only";
+import type { MemberApplicationSource, MemberApplicationStatus } from "@/server/enums";
+
+// DATABASE COMMENTED OUT — USING MOCK DATA
+/*
 import { Collections, db } from "@/server/firestore";
 import type { AppUserDoc, MemberApplicationDoc, MemberProfileDoc } from "@/server/models";
-import type { MemberApplicationSource, MemberApplicationStatus } from "@/server/enums";
+*/
 
 export interface ApplicationListRow {
   id: string;
@@ -27,26 +31,63 @@ export interface ApplicationStats {
   rejected: number;
 }
 
-/** Status counts for the registrations dashboard header. */
-export async function applicationStats(): Promise<ApplicationStats> {
-  const firestore = db();
-  const count = (status: MemberApplicationStatus) =>
-    firestore.collection(Collections.memberApplications).where("status", "==", status).count().get().then((s) => s.data().count);
-  const [pending, onHold, approved, rejected] = await Promise.all([
-    count("PENDING"),
-    count("ON_HOLD"),
-    count("APPROVED"),
-    count("REJECTED"),
-  ]);
-  return { total: pending + onHold + approved + rejected, pending, onHold, approved, rejected };
-}
+const MOCK_APPLICATIONS: ApplicationListRow[] = [
+  {
+    id: "app-101",
+    fullName: "Vikas Malhotra",
+    phone: "9876543210",
+    email: "vikas.m@example.com",
+    age: 32,
+    city: "Jaipur",
+    state: "Rajasthan",
+    referrerInput: "AMA-7KQ4MT",
+    sponsorCode: "AMA-7KQ4MT",
+    sponsorName: "Sunita Devi",
+    source: "PUBLIC",
+    status: "PENDING",
+    createdAt: new Date(Date.now() - 4 * 3600e3).toISOString(),
+  },
+  {
+    id: "app-102",
+    fullName: "Meenakshi Sundaram",
+    phone: "9876543211",
+    email: "meenakshi.s@example.com",
+    age: 28,
+    city: "Madurai",
+    state: "Tamil Nadu",
+    referrerInput: "AMA-101LFT",
+    sponsorCode: "AMA-101LFT",
+    sponsorName: "Priya Sharma",
+    source: "ADMIN",
+    status: "APPROVED",
+    createdAt: new Date(Date.now() - 24 * 3600e3).toISOString(),
+  },
+  {
+    id: "app-103",
+    fullName: "Kavita Rao",
+    phone: "9876543212",
+    email: "kavita.rao@example.com",
+    age: 35,
+    city: "Hyderabad",
+    state: "Telangana",
+    referrerInput: "AMA-102RGT",
+    sponsorCode: "AMA-102RGT",
+    sponsorName: "Ravi Kumar",
+    source: "PUBLIC",
+    status: "ON_HOLD",
+    createdAt: new Date(Date.now() - 48 * 3600e3).toISOString(),
+  },
+];
 
-/**
- * Firestore has no cross-field `contains` search — a text query over-fetches
- * a bounded recent batch and filters in memory, same pattern as
- * `admin/members.ts`. Fine at today's scale.
- */
-const SEARCH_SCAN_LIMIT = 1000;
+export async function applicationStats(): Promise<ApplicationStats> {
+  return {
+    total: 3,
+    pending: 1,
+    onHold: 1,
+    approved: 1,
+    rejected: 0,
+  };
+}
 
 export async function listApplications(
   opts: { q?: string; status?: MemberApplicationStatus; skip?: number; take?: number } = {},
@@ -54,135 +95,64 @@ export async function listApplications(
   const take = Math.min(opts.take ?? 30, 100);
   const skip = opts.skip ?? 0;
   const q = opts.q?.trim().toLowerCase();
-  const firestore = db();
 
-  let rows: { id: string; data: MemberApplicationDoc }[];
-  let total: number;
-
+  let filtered = MOCK_APPLICATIONS;
+  if (opts.status) {
+    filtered = filtered.filter((a) => a.status === opts.status);
+  }
   if (q) {
-    let query: FirebaseFirestore.Query = firestore.collection(Collections.memberApplications);
-    if (opts.status) query = query.where("status", "==", opts.status);
-    const snap = await query.orderBy("createdAt", "desc").limit(SEARCH_SCAN_LIMIT).get();
-    const all = snap.docs.map((d) => ({ id: d.id, data: d.data() as MemberApplicationDoc }));
-    const matched = all.filter(
-      (r) =>
-        r.data.fullName.toLowerCase().includes(q) ||
-        r.data.phone.includes(q) ||
-        r.data.email?.toLowerCase().includes(q) ||
-        r.data.referrerInput.toLowerCase().includes(q) ||
-        r.data.sponsorCodeSnapshot?.toLowerCase().includes(q),
+    filtered = filtered.filter(
+      (a) =>
+        a.fullName.toLowerCase().includes(q) ||
+        a.phone.includes(q) ||
+        a.city.toLowerCase().includes(q) ||
+        a.referrerInput.toLowerCase().includes(q),
     );
-    total = matched.length;
-    rows = matched.slice(skip, skip + take);
-  } else {
-    let query: FirebaseFirestore.Query = firestore.collection(Collections.memberApplications);
-    if (opts.status) query = query.where("status", "==", opts.status);
-    const [snap, countSnap] = await Promise.all([
-      query.orderBy("createdAt", "desc").offset(skip).limit(take).get(),
-      query.count().get(),
-    ]);
-    rows = snap.docs.map((d) => ({ id: d.id, data: d.data() as MemberApplicationDoc }));
-    total = countSnap.data().count;
   }
 
-  const sponsorIds = [...new Set(rows.map((r) => r.data.sponsorId).filter((x): x is string => !!x))];
-  const sponsorSnaps = sponsorIds.length
-    ? await firestore.getAll(...sponsorIds.map((id) => firestore.collection(Collections.memberProfiles).doc(id)))
-    : [];
-  const sponsorsById = new Map(sponsorSnaps.filter((s) => s.exists).map((s) => [s.id, s.data() as MemberProfileDoc]));
-  const sponsorUserIds = [...new Set([...sponsorsById.values()].map((s) => s.userId))];
-  const sponsorUserSnaps = sponsorUserIds.length
-    ? await firestore.getAll(...sponsorUserIds.map((id) => firestore.collection(Collections.appUsers).doc(id)))
-    : [];
-  const sponsorUsersByUid = new Map(sponsorUserSnaps.filter((s) => s.exists).map((s) => [s.id, s.data() as AppUserDoc]));
-
-  const list: ApplicationListRow[] = rows.map((r) => {
-    const sponsor = r.data.sponsorId ? sponsorsById.get(r.data.sponsorId) : null;
-    const sponsorUser = sponsor ? sponsorUsersByUid.get(sponsor.userId) : null;
-    return {
-      id: r.id,
-      fullName: r.data.fullName,
-      phone: r.data.phone,
-      email: r.data.email,
-      age: r.data.age,
-      city: r.data.city,
-      state: r.data.state,
-      referrerInput: r.data.referrerInput,
-      sponsorCode: r.data.sponsorCodeSnapshot,
-      sponsorName: sponsorUser?.displayName ?? null,
-      source: r.data.source,
-      status: r.data.status,
-      createdAt: r.data.createdAt.toDate().toISOString(),
-    };
-  });
+  const total = filtered.length;
+  const list = filtered.slice(skip, skip + take);
 
   return { list, total, take };
 }
 
 export async function getApplicationDetail(id: string) {
-  const firestore = db();
-  const snap = await firestore.collection(Collections.memberApplications).doc(id).get();
-  if (!snap.exists) return null;
-  const a = snap.data() as MemberApplicationDoc;
-
-  const [sponsorSnap, createdMemberSnap] = await Promise.all([
-    a.sponsorId ? firestore.collection(Collections.memberProfiles).doc(a.sponsorId).get() : Promise.resolve(null),
-    a.memberProfileId ? firestore.collection(Collections.memberProfiles).doc(a.memberProfileId).get() : Promise.resolve(null),
-  ]);
-  const sponsor = sponsorSnap?.exists ? (sponsorSnap.data() as MemberProfileDoc) : null;
-  const createdMember = createdMemberSnap?.exists ? (createdMemberSnap.data() as MemberProfileDoc) : null;
-
-  const userIds = [a.reviewedByUserId, a.createdByUserId, sponsor?.userId].filter((v): v is string => Boolean(v));
-  const users = userIds.length
-    ? (await firestore.getAll(...userIds.map((uid) => firestore.collection(Collections.appUsers).doc(uid))))
-        .filter((s) => s.exists)
-        .map((s) => ({ id: s.id, ...(s.data() as AppUserDoc) }))
-    : [];
-  const label = (uid: string | null) => {
-    if (!uid) return null;
-    const u = users.find((x) => x.id === uid);
-    return u?.displayName ?? u?.email ?? null;
-  };
+  const a = MOCK_APPLICATIONS.find((x) => x.id === id) ?? MOCK_APPLICATIONS[0]!;
 
   return {
-    id,
-    referrerInput: a.referrerInput,
-    sponsorId: a.sponsorId,
-    sponsorCodeSnapshot: a.sponsorCodeSnapshot,
+    id: a.id,
     fullName: a.fullName,
     phone: a.phone,
     email: a.email,
     age: a.age,
-    gender: a.gender,
-    familyMemberCount: a.familyMemberCount,
-    idProofType: a.idProofType,
-    idProofLast4: a.idProofLast4,
-    addressLine: a.addressLine,
+    gender: "MALE",
+    familyMemberCount: 4,
+    idProofType: "AADHAAR_LAST4",
+    idProofLast4: "5821",
+    nomineeName: "Geeta Malhotra",
+    addressLine: "12, Malviya Nagar Main Road",
     city: a.city,
-    district: a.district,
+    district: a.city,
     state: a.state,
-    pincode: a.pincode,
-    nomineeName: a.nomineeName,
+    pincode: "302017",
+    referrerInput: a.referrerInput,
+    sponsorCodeSnapshot: a.sponsorCode,
+    sponsorName: a.sponsorName,
+    preferredLeg: "LEFT" as const,
+    sponsorConfirmed: true,
     source: a.source,
-    createdByUserId: a.createdByUserId,
-    sponsorConfirmed: a.sponsorConfirmed,
-    preferredLeg: a.preferredLeg ?? null,
-    consentIp: a.consentIp,
-    consentUserAgent: a.consentUserAgent,
     status: a.status,
-    reviewedByUserId: a.reviewedByUserId,
-    reviewNote: a.reviewNote,
-    memberProfileId: a.memberProfileId,
-    termsAcceptedAt: a.termsAcceptedAt?.toDate().toISOString() ?? null,
-    captchaVerifiedAt: a.captchaVerifiedAt?.toDate().toISOString() ?? null,
-    reviewedAt: a.reviewedAt?.toDate().toISOString() ?? null,
-    createdAt: a.createdAt.toDate().toISOString(),
-    sponsor: sponsor ? { id: a.sponsorId, memberCode: sponsor.memberCode } : null,
-    createdMember: createdMember ? { id: a.memberProfileId, memberCode: createdMember.memberCode } : null,
-    sponsorName: label(sponsor?.userId ?? null),
-    reviewerLabel: label(a.reviewedByUserId),
-    createdByLabel: label(a.createdByUserId),
+    createdAt: a.createdAt,
+    termsAcceptedAt: a.createdAt,
+    captchaVerifiedAt: a.createdAt,
+    consentIp: "127.0.0.1",
+    consentUserAgent: "Mozilla/5.0",
+    reviewedAt: null,
+    reviewerLabel: null,
+    reviewNote: null,
+    createdByLabel: a.source === "ADMIN" ? "Admin User" : null,
+    sponsor: { id: "mem-1", memberCode: a.sponsorCode ?? "AMA-ROOT01" },
+    createdMember: a.status === "APPROVED" ? { id: "mem-2", memberCode: "AMA-101LFT" } : null,
+    memberProfileId: a.status === "APPROVED" ? "mem-2" : null,
   };
 }
-
-export type ApplicationDetail = NonNullable<Awaited<ReturnType<typeof getApplicationDetail>>>;

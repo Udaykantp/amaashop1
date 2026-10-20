@@ -1,86 +1,157 @@
 import "server-only";
+import type { BinarySummary, BinaryTree } from "@/server/network/binary-tree";
+
+// DATABASE COMMENTED OUT — USING MOCK DATA
+/*
 import { Collections, doc } from "@/server/firestore";
 import type { AppUserDoc, MemberProfileDoc } from "@/server/models";
 import {
   getBinarySummary,
   getBinaryTree,
-  type BinarySummary,
-  type BinaryTree,
 } from "@/server/network/binary-tree";
 import { findMemberByCodeOrPhone } from "@/server/network/lookup";
-
-/**
- * The distributor's own view of their binary team (/office/team). Everything
- * here is scoped to the signed-in distributor's downline: the chart can be
- * re-centred on anyone below them but never above, and contact details are
- * stripped before anything is returned.
- */
+*/
 
 export interface MyPlacement {
   referredBy: { code: string; name: string | null } | null;
   placedUnder: { code: string; name: string | null } | null;
   leg: "LEFT" | "RIGHT" | null;
-  /** False until the network has been converted to the binary plan. */
   binary: boolean;
 }
 
 export interface MyTeamView {
   placement: MyPlacement;
-  /** The member the chart is centred on — the distributor, or someone in their downline. */
   center: { id: string; code: string; isMe: boolean };
   tree: BinaryTree | null;
-  /** Volumes for the two legs — only for the distributor's own view, since it's their pay basis. */
   summary: BinarySummary | null;
 }
 
-async function nameAndCode(profileId: string | null | undefined): Promise<{ code: string; name: string | null } | null> {
-  if (!profileId) return null;
-  const snap = await doc(Collections.memberProfiles, profileId).get();
-  if (!snap.exists) return null;
-  const p = snap.data() as MemberProfileDoc;
-  const u = await doc(Collections.appUsers, p.userId).get();
-  return { code: p.memberCode, name: u.exists ? ((u.data() as AppUserDoc).displayName ?? null) : null };
-}
+export async function getMyTeamView(
+  myProfileId: string,
+  atCode: string | null,
+  depth: number,
+): Promise<MyTeamView> {
+  const placement: MyPlacement = {
+    referredBy: { code: "AMA-ROOT01", name: "Sunita Devi" },
+    placedUnder: { code: "AMA-ROOT01", name: "Sunita Devi" },
+    leg: "LEFT",
+    binary: true,
+  };
 
-export async function getMyTeamView(myProfileId: string, atCode: string | null, depth: number): Promise<MyTeamView> {
-  const meSnap = await doc(Collections.memberProfiles, myProfileId).get();
-  const me = meSnap.data() as MemberProfileDoc;
-  const binary = me.placementStrategy === "BINARY";
+  const centerCode = atCode || "AMA-7KQ4MT";
+  const isMe = !atCode || atCode === "AMA-7KQ4MT";
 
-  const [referredBy, placedUnder] = await Promise.all([nameAndCode(me.sponsorId), nameAndCode(me.placementParentId)]);
-  const placement: MyPlacement = { referredBy, placedUnder, leg: me.leg ?? null, binary };
+  const summary: BinarySummary = {
+    left: {
+      side: "LEFT",
+      head: { id: "m-left-1", memberCode: "AMA-101LFT", name: "Priya Sharma" },
+      members: 18,
+      active: 14,
+      volume: "34500.00",
+    },
+    right: {
+      side: "RIGHT",
+      head: { id: "m-right-1", memberCode: "AMA-102RGT", name: "Ravi Kumar" },
+      members: 16,
+      active: 12,
+      volume: "28200.00",
+    },
+    payableVolume: "28200.00",
+    carryVolume: "6300.00",
+    weaker: "RIGHT",
+  };
 
-  let centerId = myProfileId;
-  let centerCode = me.memberCode;
-  if (atCode && atCode !== me.memberCode) {
-    const found = await findMemberByCodeOrPhone(atCode);
-    // only ever someone strictly below the signed-in distributor
-    if (found && found.id !== myProfileId) {
-      const inMyTeam = await doc(Collections.networkClosure, `${myProfileId}_${found.id}`).get();
-      if (inMyTeam.exists) {
-        centerId = found.id;
-        centerCode = found.data.memberCode;
-      }
-    }
-  }
-  const isMe = centerId === myProfileId;
+  const tree: BinaryTree = {
+    depth,
+    nodes: [
+      {
+        id: myProfileId,
+        memberCode: "AMA-7KQ4MT",
+        name: "You",
+        status: "ACTIVE",
+        leg: null,
+        level: 0,
+        parentId: null,
+        leftId: "m-left-1",
+        rightId: "m-right-1",
+        leftCount: 18,
+        rightCount: 16,
+        joinedAt: new Date(Date.now() - 60 * 86400e3).toISOString(),
+        phone: null,
+        sponsorCode: null,
+      },
+      {
+        id: "m-left-1",
+        memberCode: "AMA-101LFT",
+        name: "Priya Sharma",
+        status: "ACTIVE",
+        leg: "LEFT",
+        level: 1,
+        parentId: myProfileId,
+        leftId: "m-left-2a",
+        rightId: "m-left-2b",
+        leftCount: 8,
+        rightCount: 9,
+        joinedAt: new Date(Date.now() - 40 * 86400e3).toISOString(),
+        phone: null,
+        sponsorCode: null,
+      },
+      {
+        id: "m-right-1",
+        memberCode: "AMA-102RGT",
+        name: "Ravi Kumar",
+        status: "ACTIVE",
+        leg: "RIGHT",
+        level: 1,
+        parentId: myProfileId,
+        leftId: null,
+        rightId: null,
+        leftCount: 0,
+        rightCount: 0,
+        joinedAt: new Date(Date.now() - 35 * 86400e3).toISOString(),
+        phone: null,
+        sponsorCode: null,
+      },
+      {
+        id: "m-left-2a",
+        memberCode: "AMA-201LFT",
+        name: "Anjali Mishra",
+        status: "ACTIVE",
+        leg: "LEFT",
+        level: 2,
+        parentId: "m-left-1",
+        leftId: null,
+        rightId: null,
+        leftCount: 0,
+        rightCount: 0,
+        joinedAt: new Date(Date.now() - 20 * 86400e3).toISOString(),
+        phone: null,
+        sponsorCode: null,
+      },
+      {
+        id: "m-left-2b",
+        memberCode: "AMA-202RGT",
+        name: "Deepak Verma",
+        status: "ACTIVE",
+        leg: "RIGHT",
+        level: 2,
+        parentId: "m-left-1",
+        leftId: null,
+        rightId: null,
+        leftCount: 0,
+        rightCount: 0,
+        joinedAt: new Date(Date.now() - 15 * 86400e3).toISOString(),
+        phone: null,
+        sponsorCode: null,
+      },
+    ],
+    upTo: null,
+  };
 
-  if (!binary) return { placement, center: { id: centerId, code: centerCode, isMe }, tree: null, summary: null };
-
-  const [rawTree, summary] = await Promise.all([
-    getBinaryTree(centerId, depth),
-    isMe ? getBinarySummary(centerId) : Promise.resolve(null),
-  ]);
-
-  // Strip what a distributor has no business seeing about their team: mobile
-  // numbers and who referred whom. When centred on themself there is no "up".
-  const tree: BinaryTree | null = rawTree
-    ? {
-        ...rawTree,
-        nodes: rawTree.nodes.map((n) => ({ ...n, phone: null, sponsorCode: null })),
-        upTo: isMe ? null : rawTree.upTo,
-      }
-    : null;
-
-  return { placement, center: { id: centerId, code: centerCode, isMe }, tree, summary };
+  return {
+    placement,
+    center: { id: myProfileId, code: centerCode, isMe },
+    tree,
+    summary,
+  };
 }

@@ -1,0 +1,5 @@
+{
+  "name": "AmaaShop",
+  "description": "Herbal personal care, natural home care and everyday essentials e-commerce and distributor network platform",
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

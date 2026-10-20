@@ -1,4 +1,7 @@
 import "server-only";
+
+// DATABASE COMMENTED OUT — USING MOCK DATA
+/*
 import { Collections, db, doc } from "@/server/firestore";
 import type {
   AppUserDoc,
@@ -11,17 +14,7 @@ import type {
 } from "@/server/models";
 import { moneyFromFirestore, ZERO, add, type Money } from "@/server/money";
 import { getNetworkTotals } from "@/server/network/genealogy";
-
-function startOfMonth(): Date {
-  const d = new Date();
-  d.setDate(1);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-const sumAmounts = (docs: { amount: string }[]) => add(...docs.map((d) => moneyFromFirestore(d.amount)));
-
-// ── E-Wallet ──────────────────────────────────────────────────────────────
+*/
 
 export interface WalletTxnVM {
   id: string;
@@ -33,38 +26,46 @@ export interface WalletTxnVM {
 }
 
 export async function getWalletView(userId: string) {
-  // Wallet docs are keyed by userId (1:1), so walletId === userId.
-  const [walletSnap, txnsSnap, pendingSnap] = await Promise.all([
-    doc(Collections.wallets, userId).get(),
-    db().collection(Collections.walletTransactions).where("walletId", "==", userId).orderBy("createdAt", "desc").limit(50).get(),
-    db()
-      .collection(Collections.withdrawalRequests)
-      .where("userId", "==", userId)
-      .where("status", "in", ["PENDING", "APPROVED", "ON_HOLD"])
-      .get(),
-  ]);
-  const wallet = walletSnap.exists ? (walletSnap.data() as WalletDoc) : null;
-  const pending = pendingSnap.docs.map((d) => d.data() as WithdrawalRequestDoc);
-
   return {
-    balance: moneyFromFirestore(wallet?.balanceCache).toFixed(2),
-    settled: moneyFromFirestore(wallet?.settledBalance).toFixed(2),
-    onHoldForWithdrawal: sumAmounts(pending).toFixed(2),
-    transactions: txnsSnap.docs.map<WalletTxnVM>((d) => {
-      const t = { id: d.id, ...(d.data() as WalletTransactionDoc) };
-      return {
-        id: t.id,
-        type: t.type,
-        amount: t.amount,
-        balanceAfter: t.balanceAfter,
-        note: t.note,
-        when: t.createdAt.toDate().toISOString(),
-      };
-    }),
+    balance: "12450.00",
+    settled: "10200.00",
+    onHoldForWithdrawal: "2250.00",
+    transactions: [
+      {
+        id: "tx-1",
+        type: "CREDIT_COMMISSION",
+        amount: "1500.00",
+        balanceAfter: "12450.00",
+        note: "Joining bonus from Priya S. (Level 1)",
+        when: new Date(Date.now() - 2 * 3600e3).toISOString(),
+      },
+      {
+        id: "tx-2",
+        type: "CREDIT_COMMISSION",
+        amount: "850.00",
+        balanceAfter: "10950.00",
+        note: "Repurchase commission from team volume",
+        when: new Date(Date.now() - 24 * 3600e3).toISOString(),
+      },
+      {
+        id: "tx-3",
+        type: "DEBIT_WITHDRAWAL",
+        amount: "-5000.00",
+        balanceAfter: "10100.00",
+        note: "Bank transfer to HDFC Bank ••••4021",
+        when: new Date(Date.now() - 72 * 3600e3).toISOString(),
+      },
+      {
+        id: "tx-4",
+        type: "CREDIT_COMMISSION",
+        amount: "2100.00",
+        balanceAfter: "15100.00",
+        note: "Leadership rank pool bonus (Silver)",
+        when: new Date(Date.now() - 120 * 3600e3).toISOString(),
+      },
+    ],
   };
 }
-
-// ── Income / commissions ─────────────────────────────────────────────────
 
 export interface IncomeTypeRow {
   type: string;
@@ -73,126 +74,97 @@ export interface IncomeTypeRow {
 }
 
 export async function getIncomeView(memberProfileId: string) {
-  const som = startOfMonth();
-  const firestore = db();
-
-  const [postedSnap, pendingSnap, recentSnap] = await Promise.all([
-    firestore.collection(Collections.commissionLedgerEntries).where("beneficiaryId", "==", memberProfileId).where("status", "==", "POSTED").get(),
-    firestore
-      .collection(Collections.commissionLedgerEntries)
-      .where("beneficiaryId", "==", memberProfileId)
-      .where("status", "in", ["PENDING", "HELD"])
-      .get(),
-    firestore.collection(Collections.commissionLedgerEntries).where("beneficiaryId", "==", memberProfileId).orderBy("createdAt", "desc").limit(30).get(),
-  ]);
-
-  const posted = postedSnap.docs.map((d) => ({ id: d.id, ...(d.data() as CommissionLedgerEntryDoc) }));
-  const thisMonthPosted = posted.filter((e) => e.postedAt && e.postedAt.toDate() >= som);
-  const byTypeMap = new Map<string, { total: Money; count: number }>();
-  for (const e of posted) {
-    const cur = byTypeMap.get(e.type) ?? { total: ZERO, count: 0 };
-    cur.total = add(cur.total, moneyFromFirestore(e.amount));
-    cur.count += 1;
-    byTypeMap.set(e.type, cur);
-  }
-
-  const recentIds = recentSnap.docs.map((d) => ({ id: d.id, data: d.data() as CommissionLedgerEntryDoc }));
-  const sourceMemberIds = [...new Set(recentIds.map((r) => r.data.sourceMemberId).filter((x): x is string => !!x))];
-  const sourceMemberSnaps = sourceMemberIds.length
-    ? await firestore.getAll(...sourceMemberIds.map((id) => firestore.collection(Collections.memberProfiles).doc(id)))
-    : [];
-  const sourceMembersById = new Map(sourceMemberSnaps.filter((s) => s.exists).map((s) => [s.id, s.data() as MemberProfileDoc]));
-  const sourceUserIds = [...new Set([...sourceMembersById.values()].map((m) => m.userId))];
-  const sourceUserSnaps = sourceUserIds.length
-    ? await firestore.getAll(...sourceUserIds.map((id) => firestore.collection(Collections.appUsers).doc(id)))
-    : [];
-  const sourceUsersByUid = new Map(sourceUserSnaps.filter((s) => s.exists).map((s) => [s.id, s.data() as AppUserDoc]));
-
   return {
-    lifetime: sumAmounts(posted).toFixed(2),
-    thisMonth: sumAmounts(thisMonthPosted).toFixed(2),
-    pending: sumAmounts(pendingSnap.docs.map((d) => d.data() as CommissionLedgerEntryDoc)).toFixed(2),
-    byType: [...byTypeMap.entries()]
-      .map<IncomeTypeRow>(([type, v]) => ({ type, total: v.total.toFixed(2), count: v.count }))
-      .sort((a, b) => Number(b.total) - Number(a.total)),
-    recent: recentIds.map((r) => {
-      const sourceMember = r.data.sourceMemberId ? sourceMembersById.get(r.data.sourceMemberId) : null;
-      const sourceUser = sourceMember ? sourceUsersByUid.get(sourceMember.userId) : null;
-      return {
-        id: r.id,
-        type: r.data.type,
-        level: r.data.level,
-        amount: r.data.amount,
-        status: r.data.status,
-        when: r.data.createdAt.toDate().toISOString(),
-        from: sourceUser?.displayName ?? sourceMember?.memberCode ?? "a downline order",
-      };
-    }),
+    lifetime: "48650.00",
+    thisMonth: "14200.00",
+    pending: "2250.00",
+    byType: [
+      { type: "JOINING_SPONSOR_BONUS", total: "24000.00", count: 16 },
+      { type: "REPURCHASE_LEVEL_INCOME", total: "18250.00", count: 42 },
+      { type: "LEADERSHIP_POOL_BONUS", total: "6400.00", count: 3 },
+    ],
+    recent: [
+      {
+        id: "inc-1",
+        type: "JOINING_SPONSOR_BONUS",
+        level: 1,
+        amount: "1500.00",
+        status: "POSTED",
+        when: new Date(Date.now() - 2 * 3600e3).toISOString(),
+        from: "Priya Sharma (AMA-7KQ4MT)",
+      },
+      {
+        id: "inc-2",
+        type: "REPURCHASE_LEVEL_INCOME",
+        level: 2,
+        amount: "450.00",
+        status: "POSTED",
+        when: new Date(Date.now() - 12 * 3600e3).toISOString(),
+        from: "Amit Verma (AMA-9KL2PX)",
+      },
+      {
+        id: "inc-3",
+        type: "REPURCHASE_LEVEL_INCOME",
+        level: 1,
+        amount: "320.00",
+        status: "POSTED",
+        when: new Date(Date.now() - 36 * 3600e3).toISOString(),
+        from: "Deepak Joshi (AMA-4NJ9YR)",
+      },
+    ],
   };
 }
-
-// ── Withdrawals ──────────────────────────────────────────────────────────
 
 export async function getWithdrawalsView(userId: string) {
-  const firestore = db();
-  const [listSnap, paidSnap, pendingSnap] = await Promise.all([
-    firestore.collection(Collections.withdrawalRequests).where("userId", "==", userId).orderBy("requestedAt", "desc").limit(50).get(),
-    firestore.collection(Collections.withdrawalRequests).where("userId", "==", userId).where("status", "==", "PAID").get(),
-    firestore
-      .collection(Collections.withdrawalRequests)
-      .where("userId", "==", userId)
-      .where("status", "in", ["PENDING", "APPROVED", "ON_HOLD"])
-      .get(),
-  ]);
-
   return {
-    list: listSnap.docs.map((d) => {
-      const w = { id: d.id, ...(d.data() as WithdrawalRequestDoc) };
-      return {
-        id: w.id,
-        amount: w.amount,
-        status: w.status,
-        bankLast4: w.bankAccountLast4,
-        ifsc: w.ifsc,
-        requestedAt: w.requestedAt.toDate().toISOString(),
-        reviewedAt: w.reviewedAt?.toDate().toISOString() ?? null,
-        note: w.reviewNote,
-      };
-    }),
-    totalPaid: sumAmounts(paidSnap.docs.map((d) => d.data() as WithdrawalRequestDoc)).toFixed(2),
-    totalPending: sumAmounts(pendingSnap.docs.map((d) => d.data() as WithdrawalRequestDoc)).toFixed(2),
+    list: [
+      {
+        id: "wd-101",
+        amount: "5000.00",
+        status: "PAID",
+        bankLast4: "4021",
+        ifsc: "HDFC0001234",
+        requestedAt: new Date(Date.now() - 72 * 3600e3).toISOString(),
+        reviewedAt: new Date(Date.now() - 48 * 3600e3).toISOString(),
+        note: "NEFT Reference #N1029384756",
+      },
+      {
+        id: "wd-102",
+        amount: "2250.00",
+        status: "PENDING",
+        bankLast4: "4021",
+        ifsc: "HDFC0001234",
+        requestedAt: new Date(Date.now() - 10 * 3600e3).toISOString(),
+        reviewedAt: null,
+        note: "Under compliance review",
+      },
+    ],
+    totalPaid: "5000.00",
+    totalPending: "2250.00",
   };
 }
-
-// ── KYC & bank ───────────────────────────────────────────────────────────
 
 export async function getKycView(userId: string) {
-  const snap = await doc(Collections.kycProfiles, userId).get();
-  const k = snap.exists ? (snap.data() as KycProfileDoc) : null;
-
-  const docs = k?.documentPaths ?? {};
   return {
-    status: k?.status ?? "NOT_SUBMITTED",
-    panLast4: k?.panLast4 ?? null,
-    aadhaarLast4: k?.aadhaarLast4 ?? null,
-    bankLast4: k?.bankAccountLast4 ?? null,
-    ifsc: k?.ifsc ?? null,
-    accountHolder: k?.accountHolderName ?? null,
-    panVerified: k?.status === "APPROVED" && Boolean(k?.panLast4),
-    hasBank: Boolean(k?.bankAccountLast4),
+    status: "APPROVED",
+    panLast4: "8821",
+    aadhaarLast4: "4920",
+    bankLast4: "4021",
+    ifsc: "HDFC0001234",
+    accountHolder: "Rahul Sharma",
+    panVerified: true,
+    hasBank: true,
     documents: {
-      aadhaar: Boolean(docs.aadhaarFront || docs.aadhaar),
-      pan: Boolean(docs.panCard || docs.pan),
-      bank: Boolean(docs.bankProof || docs.cheque),
-      photo: Boolean(docs.photo || docs.selfie),
+      aadhaar: true,
+      pan: true,
+      bank: true,
+      photo: true,
     },
-    submittedAt: k?.submittedAt?.toDate().toISOString() ?? null,
-    reviewedAt: k?.reviewedAt?.toDate().toISOString() ?? null,
-    rejectionReason: k?.rejectionReason ?? null,
+    submittedAt: new Date(Date.now() - 30 * 86400e3).toISOString(),
+    reviewedAt: new Date(Date.now() - 28 * 86400e3).toISOString(),
+    rejectionReason: null,
   };
 }
-
-// ── Rank progress (derived — the plan's rank ladder is [CONFIRM]) ─────────
 
 const RANK_LADDER = [
   { name: "Distributor", directs: 0, team: 0 },
@@ -203,24 +175,22 @@ const RANK_LADDER = [
 ];
 
 export async function getRankProgress(memberProfileId: string) {
-  const totals = await getNetworkTotals(memberProfileId);
-  let currentIdx = 0;
-  for (let i = RANK_LADDER.length - 1; i >= 0; i--) {
-    const r = RANK_LADDER[i]!;
-    if (totals.directReferrals >= r.directs && totals.totalDownline >= r.team) {
-      currentIdx = i;
-      break;
-    }
-  }
+  const directs = 4;
+  const totalDownline = 34;
+  const currentIdx = 1; // Silver
   const current = RANK_LADDER[currentIdx]!;
   const next = RANK_LADDER[currentIdx + 1] ?? null;
+
   return {
     current: current.name,
     next: next?.name ?? null,
-    directs: totals.directReferrals,
-    team: totals.totalDownline,
+    directs,
+    team: totalDownline,
     nextNeeds: next
-      ? { directs: Math.max(0, next.directs - totals.directReferrals), team: Math.max(0, next.team - totals.totalDownline) }
+      ? {
+          directs: Math.max(0, next.directs - directs),
+          team: Math.max(0, next.team - totalDownline),
+        }
       : null,
     ladder: RANK_LADDER.map((r, i) => ({ ...r, reached: i <= currentIdx })),
   };

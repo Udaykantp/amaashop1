@@ -16,23 +16,43 @@ export interface OfficeContext {
   impersonated: boolean;
 }
 
+const MOCK_OFFICE_CONTEXT: OfficeContext = {
+  userId: "usr-mem-01",
+  memberProfileId: "mem-1",
+  memberCode: "AMA-7KQ4MT",
+  displayName: "Sunita Devi",
+  email: "sunita.devi@example.com",
+  status: "ACTIVE",
+  frozen: false,
+  impersonated: false,
+};
+
 /**
  * Resolve the signed-in distributor for a `/office` page.
+ *  - in mock mode (backend not configured) -> returns mock distributor context
  *  - not signed in                 -> /office/login
  *  - signed in, not a distributor  -> /office/join  (become one first)
  *  - signed in distributor         -> context
- *
- * Backoffice access is intentionally *separate* from the `/admin` console:
- * a Super Admin without a member profile is redirected to /office/join like
- * anyone else.
  */
 export async function getOfficeContext(): Promise<OfficeContext> {
+  const isConfigured = backendStatus().configured;
   const user = await getCurrentUser().catch(() => null);
-  if (!user) redirect("/office/login");
-  if (!user.memberProfileId) redirect("/office/join");
+
+  if (!user) {
+    if (!isConfigured) return MOCK_OFFICE_CONTEXT;
+    redirect("/office/login");
+  }
+
+  if (!user.memberProfileId) {
+    if (!isConfigured) return MOCK_OFFICE_CONTEXT;
+    redirect("/office/join");
+  }
 
   const snap = await doc(Collections.memberProfiles, user.memberProfileId).get();
-  if (!snap.exists) redirect("/office/join");
+  if (!snap.exists) {
+    if (!isConfigured) return MOCK_OFFICE_CONTEXT;
+    redirect("/office/join");
+  }
   const profile = snap.data() as MemberProfileDoc;
 
   return {

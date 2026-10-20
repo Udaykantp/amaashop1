@@ -78,7 +78,7 @@ export interface JsonLdReview {
   author: string;
   rating: number;
   title?: string | null;
-  body: string;
+  body?: string | null;
   datePublished: string;
 }
 
